@@ -62,7 +62,7 @@ const AdminTrainingRecords = () => {
   ];
 
   return (
-    <Card title="全员培训记录" bordered={false}>
+    <Card title="全员培训记录" variant="borderless">
       <Table 
         columns={columns} 
         dataSource={records} 

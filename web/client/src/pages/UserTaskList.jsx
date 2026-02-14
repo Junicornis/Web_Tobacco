@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { List, Card, Button, Tag, message, Typography, Badge } from 'antd';
+import { Card, Button, Tag, message, Typography, Badge, Row, Col, Spin, Empty } from 'antd';
 import { PlayCircleOutlined, ClockCircleOutlined } from '@ant-design/icons';
 import axios from 'axios';
 
@@ -53,31 +53,34 @@ const UserTaskList = ({ user }) => {
   return (
     <div>
       <Title level={3}>我的培训任务</Title>
-      <List
-        grid={{ gutter: 16, xs: 1, sm: 1, md: 2, lg: 3, xl: 3, xxl: 4 }}
-        dataSource={tasks}
-        loading={loading}
-        renderItem={item => (
-          <List.Item>
-            <Card 
-                title={item.title} 
-                extra={<Tag color="blue">{item.status === 'active' ? '进行中' : '已归档'}</Tag>}
-                actions={[
-                    <Button type="primary" icon={<PlayCircleOutlined />} onClick={() => startTraining(item)} block>
-                        开始培训
-                    </Button>
-                ]}
-            >
-              <p style={{ height: '60px', overflow: 'hidden', textOverflow: 'ellipsis' }}>
-                  {item.description}
-              </p>
-              <div style={{ marginTop: '10px', color: '#888' }}>
-                  <ClockCircleOutlined /> 截止日期: {new Date(item.deadline).toLocaleDateString()}
-              </div>
-            </Card>
-          </List.Item>
+      <Spin spinning={loading}>
+        {tasks.length === 0 ? (
+            <Empty description="暂无任务" />
+        ) : (
+            <Row gutter={[16, 16]}>
+                {tasks.map((item, index) => (
+                    <Col xs={24} sm={24} md={12} lg={8} xl={8} xxl={6} key={item._id || index}>
+                        <Card 
+                            title={item.title} 
+                            extra={<Tag color="blue">{item.status === 'active' ? '进行中' : '已归档'}</Tag>}
+                            actions={[
+                                <Button type="primary" icon={<PlayCircleOutlined />} onClick={() => startTraining(item)} block>
+                                    开始培训
+                                </Button>
+                            ]}
+                        >
+                          <p style={{ height: '60px', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                              {item.description}
+                          </p>
+                          <div style={{ marginTop: '10px', color: '#888' }}>
+                              <ClockCircleOutlined /> 截止日期: {new Date(item.deadline).toLocaleDateString()}
+                          </div>
+                        </Card>
+                    </Col>
+                ))}
+            </Row>
         )}
-      />
+      </Spin>
     </div>
   );
 };

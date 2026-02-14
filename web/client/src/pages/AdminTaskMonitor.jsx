@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { Table, Card, Tag, Button, Modal, Input, message, Tooltip, Space, Progress, Badge, List, Checkbox } from 'antd';
+import { Table, Card, Tag, Button, Modal, Input, message, Tooltip, Space, Progress, Badge, Checkbox } from 'antd';
 import { StopOutlined, BellOutlined, InfoCircleOutlined, CheckCircleOutlined, CloseCircleOutlined } from '@ant-design/icons';
 import axios from 'axios';
 
@@ -147,50 +147,48 @@ const AdminTaskMonitor = () => {
       return (
           <div style={{ padding: '0 20px', background: '#fafafa' }}>
               <h4>学习情况详情 ({userDetails.length}人)</h4>
-              <List
-                grid={{ gutter: 16, column: 4 }}
-                dataSource={userDetails}
-                renderItem={user => (
-                    <List.Item>
-                        <Card size="small" bordered={false} style={{ background: user.isCompleted ? '#f6ffed' : '#fff1f0', border: '1px solid #eee' }}>
-                            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                                <div>
-                                    <div style={{ fontWeight: 'bold' }}>{user.username} <Tag>{user.department}</Tag></div>
-                                    <div style={{ fontSize: '12px', marginTop: 5 }}>
-                                        {user.isCompleted ? (
-                                            <Space>
-                                                <CheckCircleOutlined style={{ color: 'green' }} />
-                                                <span style={{ color: 'green' }}>已完成 ({user.score}分)</span>
-                                            </Space>
-                                        ) : (
-                                            <Space>
-                                                <CloseCircleOutlined style={{ color: 'red' }} />
-                                                <span style={{ color: 'red' }}>未完成</span>
-                                            </Space>
-                                        )}
-                                    </div>
-                                </div>
-                                {!user.isCompleted && record.status === 'active' && (
-                                    <Button 
-                                        type="link" 
-                                        size="small" 
-                                        icon={<BellOutlined />}
-                                        onClick={() => openRemindModal(record, [user._id])}
-                                    >
-                                        提醒
-                                    </Button>
-                                )}
-                            </div>
-                        </Card>
-                    </List.Item>
-                )}
-              />
+              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 16 }}>
+                  {userDetails.map((user, index) => (
+                      <div key={user._id || index}>
+                          <Card size="small" variant="borderless" style={{ background: user.isCompleted ? '#f6ffed' : '#fff1f0', border: '1px solid #eee' }}>
+                              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                                  <div>
+                                      <div style={{ fontWeight: 'bold' }}>{user.username} <Tag>{user.department}</Tag></div>
+                                      <div style={{ fontSize: '12px', marginTop: 5 }}>
+                                          {user.isCompleted ? (
+                                              <Space>
+                                                  <CheckCircleOutlined style={{ color: 'green' }} />
+                                                  <span style={{ color: 'green' }}>已完成 ({user.score}分)</span>
+                                              </Space>
+                                          ) : (
+                                              <Space>
+                                                  <CloseCircleOutlined style={{ color: 'red' }} />
+                                                  <span style={{ color: 'red' }}>未完成</span>
+                                              </Space>
+                                          )}
+                                      </div>
+                                  </div>
+                                  {!user.isCompleted && record.status === 'active' && (
+                                      <Button 
+                                          type="link" 
+                                          size="small" 
+                                          icon={<BellOutlined />}
+                                          onClick={() => openRemindModal(record, [user._id])}
+                                      >
+                                          提醒
+                                      </Button>
+                                  )}
+                              </div>
+                          </Card>
+                      </div>
+                  ))}
+              </div>
           </div>
       );
   };
 
   return (
-    <Card title="任务监控中心" bordered={false}>
+    <Card title="任务监控中心" variant="borderless">
       <Table 
         columns={columns} 
         dataSource={tasks} 

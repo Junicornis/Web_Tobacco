@@ -9,7 +9,9 @@ import {
   BookOutlined, 
   BarChartOutlined, 
   CloseCircleOutlined, 
-  IdcardOutlined
+  IdcardOutlined,
+  BranchesOutlined,
+  ApartmentOutlined
 } from '@ant-design/icons';
 import { useNavigate, useLocation } from 'react-router-dom';
 
@@ -54,6 +56,11 @@ const MainLayout = ({ children, role, onLogout, username }) => {
       key: '/admin/users',
       icon: <UserOutlined />,
       label: '人员管理',
+    },
+    {
+      key: '/admin/knowledge-graph/browser',
+      icon: <BranchesOutlined />,
+      label: '知识图谱',
     }
   ];
 
@@ -87,6 +94,11 @@ const MainLayout = ({ children, role, onLogout, username }) => {
       key: '/user/profile',
       icon: <IdcardOutlined />,
       label: '个人中心',
+    },
+    {
+      key: '/user/knowledge-graph',
+      icon: <BranchesOutlined />,
+      label: '知识图谱',
     }
   ];
 
@@ -125,7 +137,7 @@ const MainLayout = ({ children, role, onLogout, username }) => {
             </Button>
           </div>
         </Header>
-        <Content style={{ margin: '24px 16px', padding: 24, minHeight: 280, background: colorBgContainer, borderRadius: borderRadiusLG }}>
+        <Content style={{ margin: '0px 0px 0px 0px', padding: 12, minHeight: 280, background: colorBgContainer, borderRadius: borderRadiusLG }}>
           {childrenWithProps}
         </Content>
       </Layout>

@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { List, Card, Tag, Collapse, Typography, Empty } from 'antd';
+import { Card, Tag, Collapse, Typography, Empty } from 'antd';
 import { CloseCircleOutlined } from '@ant-design/icons';
 import axios from 'axios';
 
@@ -20,7 +20,7 @@ const UserMistakes = ({ user }) => {
   }, [user.id]);
 
   return (
-    <Card title="我的错题本" bordered={false}>
+    <Card title="我的错题本" variant="borderless">
         {mistakes.length === 0 ? <Empty description="太棒了，暂无错题！" /> : (
             <Collapse accordion>
                 {mistakes.map((m, index) => (

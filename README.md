@@ -20,7 +20,7 @@ Tobacco_train2/
 cd web/server
 npm install
 npm start
-# 默认端口: 3001
+# 默认端口: 3000（可在 web/server/.env 里通过 PORT 修改）
 ```
 
 ### 2. 启动前端 (Client)
@@ -34,6 +34,22 @@ npm run dev
 ### 3. Unity 场景
 请使用 Unity Hub 打开 `unity/` 目录进行编辑或打包。
 打包后的 exe 文件路径需在 `web/server/.env` 中配置。
+
+## 🧠 知识图谱（Neo4j/APOC）
+
+知识图谱写入依赖 Neo4j。若要启用 APOC（推荐），需要在你实际运行的 Neo4j 实例中安装 APOC 插件，并在该实例的 `conf/neo4j.conf` 放行 `apoc.*` 后重启 Neo4j：
+
+```
+dbms.security.procedures.unrestricted=apoc.*
+dbms.security.procedures.allowlist=apoc.*
+```
+
+后端提供了自检命令用于确认“当前连接的 Neo4j 实例”是否真正注册了 `apoc.*`：
+
+```bash
+cd web/server
+npm run check:neo4j
+```
 
 ## 🌿 分支管理策略
 

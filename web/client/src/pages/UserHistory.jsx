@@ -58,12 +58,12 @@ const UserHistory = ({ user }) => {
         </Col>
         <Col span={12}>
           <Card>
-            <Statistic title="最高得分" value={maxScore} prefix={<TrophyOutlined />} valueStyle={{ color: '#cf1322' }} />
+            <Statistic title="最高得分" value={maxScore} prefix={<TrophyOutlined />} styles={{ content: { color: '#cf1322' } }} />
           </Card>
         </Col>
       </Row>
 
-      <Card title="历史成绩单" bordered={false}>
+      <Card title="历史成绩单" variant="borderless">
         <Table 
             columns={columns} 
             dataSource={records} 

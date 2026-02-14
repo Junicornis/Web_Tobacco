@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { List, Card, Typography, Empty, Badge, Button, Modal, message, Space } from 'antd';
+import { Card, Typography, Empty, Badge, Button, Modal, message, Space, Spin } from 'antd';
 import { BellOutlined, CheckOutlined, ReadOutlined } from '@ant-design/icons';
 import axios from 'axios';
 
@@ -67,60 +67,70 @@ const UserInbox = ({ user, onReadUpdate }) => {
   return (
     <Card 
         title={<><BellOutlined /> 消息信箱</>} 
-        bordered={false}
+        variant="borderless"
         extra={
             <Button type="link" icon={<CheckOutlined />} onClick={handleReadAll}>
                 一键已读
             </Button>
         }
     >
-      <List
-        itemLayout="horizontal"
-        dataSource={notifications}
-        loading={loading}
-        locale={{ emptyText: <Empty description="暂无消息" /> }}
-        renderItem={item => (
-          <List.Item 
-            style={{ 
-                cursor: 'pointer', 
-                backgroundColor: item.isRead ? 'transparent' : '#f0faff', 
-                padding: '12px',
-                borderRadius: '4px',
-                marginBottom: '8px',
-                transition: 'background 0.3s'
-            }}
-            onClick={() => handleClickNote(item)}
-            actions={[
-                !item.isRead && <Badge status="processing" text="未读" />
-            ]}
-          >
-            <List.Item.Meta
-              avatar={
-                  <Badge dot={!item.isRead}>
-                      <BellOutlined style={{ fontSize: '20px', color: item.isRead ? '#ccc' : '#1890ff' }} />
-                  </Badge>
-              }
-              title={
-                  <div style={{ display: 'flex', justifyContent: 'space-between' }}>
-                      <span style={{ fontWeight: item.isRead ? 'normal' : 'bold' }}>{item.title}</span>
-                      <span style={{ fontSize: '12px', color: '#999' }}>{new Date(item.createdAt).toLocaleString()}</span>
-                  </div>
-              }
-              description={
-                  <div style={{ 
-                      whiteSpace: 'nowrap', 
-                      overflow: 'hidden', 
-                      textOverflow: 'ellipsis', 
-                      maxWidth: '500px',
-                      color: '#666' 
-                  }}>
-                      {item.content}
-                  </div>
-              }
-            />
-          </List.Item>
-        )}
-      />
+      <Spin spinning={loading}>
+          {notifications.length === 0 ? (
+              <Empty description="暂无消息" />
+          ) : (
+              <div>
+                  {notifications.map((item, index) => (
+                      <div 
+                          key={item._id || index}
+                          style={{ 
+                              display: 'flex',
+                              alignItems: 'center',
+                              cursor: 'pointer', 
+                              backgroundColor: item.isRead ? 'transparent' : '#f0faff', 
+                              padding: '12px',
+                              borderRadius: '4px',
+                              marginBottom: '8px',
+                              transition: 'background 0.3s'
+                          }}
+                          onClick={() => handleClickNote(item)}
+                      >
+                          {/* Avatar */}
+                          <div style={{ marginRight: 16 }}>
+                              <Badge dot={!item.isRead}>
+                                  <BellOutlined style={{ fontSize: '20px', color: item.isRead ? '#ccc' : '#1890ff' }} />
+                              </Badge>
+                          </div>
+                          
+                          {/* Content */}
+                          <div style={{ flex: 1 }}>
+                              <div style={{ marginBottom: 4 }}>
+                                  <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+                                      <span style={{ fontWeight: item.isRead ? 'normal' : 'bold' }}>{item.title}</span>
+                                      <span style={{ fontSize: '12px', color: '#999' }}>{new Date(item.createdAt).toLocaleString()}</span>
+                                  </div>
+                              </div>
+                              <div style={{ 
+                                  whiteSpace: 'nowrap', 
+                                  overflow: 'hidden', 
+                                  textOverflow: 'ellipsis', 
+                                  maxWidth: '500px',
+                                  color: '#666' 
+                              }}>
+                                  {item.content}
+                              </div>
+                          </div>
+
+                          {/* Actions */}
+                          {!item.isRead && (
+                              <div style={{ marginLeft: 16 }}>
+                                  <Badge status="processing" text="未读" />
+                              </div>
+                          )}
+                      </div>
+                  ))}
+              </div>
+          )}
+      </Spin>
 
       <Modal
         title={currentNote?.title}
