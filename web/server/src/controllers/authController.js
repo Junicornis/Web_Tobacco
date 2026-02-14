@@ -1,6 +1,8 @@
 const User = require('../models/User');
 const tokenHelper = require('../utils/tokenHelper');
-const { exec } = require('child_process');
+const fs = require('fs');
+const path = require('path');
+const { spawn } = require('child_process');
 
 // 模拟登录
 exports.login = async (req, res) => {
@@ -13,7 +15,7 @@ exports.login = async (req, res) => {
             user = new User({ username, password, role, department: 'Default' });
             await user.save();
         }
-        res.json({ success: true, user: { id: user._id, username: user.username, role: user.role } });
+        res.json({ success: true, user: { id: user._id, username: user.username, role: user.role, department: user.department } });
     } catch (err) {
         res.status(500).json({ success: false, message: err.message });
     }
@@ -45,31 +47,56 @@ exports.verifyToken = async (req, res) => {
     res.json({ success: true, user: userData });
 };
 
-// 修改个人资料
-exports.updateProfile = async (req, res) => {
-    const { userId, password, department } = req.body;
-    try {
-        const updateData = {};
-        if (password) updateData.password = password;
-        if (department) updateData.department = department;
-        
-        await User.findByIdAndUpdate(userId, updateData);
-        res.json({ success: true });
-    } catch (err) {
-        res.status(500).json({ success: false, message: err.message });
-    }
-};
-
 // 启动 Unity
 exports.launchUnity = (req, res) => {
-    const unityPath = req.body.unityPath || process.env.UNITY_EXE_PATH;
-    if (!unityPath) {
-        return res.status(500).json({ success: false, message: 'Unity path not configured' });
-    }
-    
-    console.log(`Launching Unity from: ${unityPath}`);
-    const child = exec(`"${unityPath}"`, { detached: true, stdio: 'ignore' });
-    child.unref();
+    const bodyUnityPath = typeof req.body?.unityPath === 'string' ? req.body.unityPath.trim() : '';
+    const unityPath = (bodyUnityPath || process.env.UNITY_EXE_PATH || '').trim();
+    if (!unityPath) return res.status(400).json({ success: false, message: 'Unity path not configured' });
 
-    res.json({ success: true, message: 'Unity launch command executed' });
+    const normalizedPath = unityPath.replace(/^"(.*)"$/, '$1');
+    const resolvedPath = path.resolve(normalizedPath);
+
+    if (!fs.existsSync(resolvedPath)) {
+        return res.status(400).json({ success: false, message: `Unity exe not found: ${resolvedPath}` });
+    }
+
+    if (path.extname(resolvedPath).toLowerCase() !== '.exe') {
+        return res.status(400).json({ success: false, message: `Unity path must be an .exe: ${resolvedPath}` });
+    }
+
+    console.log(`Launching Unity from: ${resolvedPath}`);
+    let child;
+    try {
+        child = spawn(resolvedPath, [], {
+            detached: true,
+            stdio: 'ignore',
+            cwd: path.dirname(resolvedPath),
+            windowsHide: false
+        });
+    } catch (err) {
+        return res.status(500).json({ success: false, message: err.message });
+    }
+
+    let settled = false;
+    const done = (payload, statusCode = 200) => {
+        if (settled) return;
+        settled = true;
+        try {
+            child.unref();
+        } catch (_) {}
+        if (statusCode >= 400) return res.status(statusCode).json(payload);
+        return res.json(payload);
+    };
+
+    child.once('error', (err) => {
+        done({ success: false, message: `Failed to launch Unity: ${err.message}`, unityPath: resolvedPath }, 500);
+    });
+
+    child.once('spawn', () => {
+        done({ success: true, message: 'Unity launch command executed', unityPath: resolvedPath });
+    });
+
+    setTimeout(() => {
+        done({ success: true, message: 'Unity launch command executed', unityPath: resolvedPath });
+    }, 800);
 };

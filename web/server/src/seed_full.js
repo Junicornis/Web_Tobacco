@@ -4,10 +4,8 @@ require('dotenv').config();
 // 引入所有模型
 const User = require('./models/User');
 const TrainingTask = require('./models/TrainingTask');
-const Notification = require('./models/Notification');
 const TrainingRecord = require('./models/TrainingRecord');
 const Question = require('./models/Question');
-const MistakeRecord = require('./models/MistakeRecord');
 const TempToken = require('./models/TempToken');
 
 const MONGODB_URI = process.env.MONGODB_URI;
@@ -22,26 +20,26 @@ const usersData = [
 ];
 
 const questionsData = [
-    { 
-        title: '灭火器使用步骤中，第一步是什么？', 
-        options: ['A. 拔掉保险销', 'B. 对准火源根部', 'C. 按压手柄', 'D. 检查压力表'], 
-        correctAnswer: 'A', 
-        category: '消防安全', 
-        analysis: '使用灭火器口诀：一拔（保险销）、二握（喷管）、三压（手柄）、四喷（火源根部）。' 
+    {
+        title: '灭火器使用步骤中，第一步是什么？',
+        options: ['A. 拔掉保险销', 'B. 对准火源根部', 'C. 按压手柄', 'D. 检查压力表'],
+        correctAnswer: 'A',
+        category: '消防安全',
+        analysis: '使用灭火器口诀：一拔（保险销）、二握（喷管）、三压（手柄）、四喷（火源根部）。'
     },
-    { 
-        title: '车间内发生电气火灾时，首先应该做什么？', 
-        options: ['A. 用水灭火', 'B. 切断电源', 'C. 呼救', 'D. 逃跑'], 
-        correctAnswer: 'B', 
-        category: '用电安全', 
-        analysis: '电气火灾必须先切断电源，防止触电和火势蔓延。严禁用水灭火。' 
+    {
+        title: '车间内发生电气火灾时，首先应该做什么？',
+        options: ['A. 用水灭火', 'B. 切断电源', 'C. 呼救', 'D. 逃跑'],
+        correctAnswer: 'B',
+        category: '用电安全',
+        analysis: '电气火灾必须先切断电源，防止触电和火势蔓延。严禁用水灭火。'
     },
-    { 
-        title: '进入高噪音区域作业，必须佩戴什么？', 
-        options: ['A. 安全帽', 'B. 护目镜', 'C. 耳塞或耳罩', 'D. 防尘口罩'], 
-        correctAnswer: 'C', 
-        category: '劳动防护', 
-        analysis: '长期接触高噪音会导致听力损伤，必须佩戴护耳器。' 
+    {
+        title: '进入高噪音区域作业，必须佩戴什么？',
+        options: ['A. 安全帽', 'B. 护目镜', 'C. 耳塞或耳罩', 'D. 防尘口罩'],
+        correctAnswer: 'C',
+        category: '劳动防护',
+        analysis: '长期接触高噪音会导致听力损伤，必须佩戴护耳器。'
     }
 ];
 
@@ -57,7 +55,7 @@ const tasksData = [
         title: '新进员工车间安全规范培训',
         description: '熟悉车间行走路线、危险源标识及紧急疏散通道。',
         deadline: new Date('2024-04-15'),
-        unityPath: 'D:/proj/Hu_tobacco/Tobacco_train2/unity/Build/WindowsRelease/Safety-Training.exe',
+        unityPath: 'D:/proj/Hu_tobacco/Web_Tobacco/unity/Build/Release/Safety-Training.exe',
         status: 'active'
     }
 ];
@@ -71,10 +69,8 @@ const seedDB = async () => {
         console.log('🧹 Clearing old data...');
         await User.deleteMany({});
         await TrainingTask.deleteMany({});
-        await Notification.deleteMany({});
         await TrainingRecord.deleteMany({});
         await Question.deleteMany({});
-        await MistakeRecord.deleteMany({});
         await TempToken.deleteMany({});
 
         // 2. 创建用户
@@ -97,31 +93,7 @@ const seedDB = async () => {
         }));
         const createdTasks = await TrainingTask.insertMany(tasksWithAssignees);
 
-        // 5. 创建通知 (给每个员工发通知)
-        console.log('🔔 Seeding Notifications...');
-        const notifications = [];
-        createdTasks.forEach(task => {
-            staffIds.forEach(uid => {
-                notifications.push({
-                    userId: uid,
-                    title: `新任务: ${task.title}`,
-                    content: `请于 ${task.deadline.toLocaleDateString()} 前完成。${task.description}`,
-                    type: 'training_assigned',
-                    relatedTaskId: task._id
-                });
-            });
-        });
-        // 再加几条已读/未读消息
-        notifications.push({
-            userId: userMap['zhangsan'],
-            title: '系统维护通知',
-            content: '系统将于本周六晚进行升级维护，请提前保存数据。',
-            type: 'system',
-            isRead: true
-        });
-        await Notification.insertMany(notifications);
-
-        // 6. 创建培训记录 (模拟部分员工已完成)
+        // 5. 创建培训记录 (模拟部分员工已完成)
         console.log('🏆 Seeding Training Records...');
         const records = [
             {
@@ -150,19 +122,6 @@ const seedDB = async () => {
             }
         ];
         await TrainingRecord.insertMany(records);
-
-        // 7. 创建错题记录 (模拟 lisi 做错的题)
-        console.log('❌ Seeding Mistake Records...');
-        const mistakes = [
-            {
-                userId: userMap['lisi'],
-                questionId: createdQuestions[1]._id,
-                questionContent: createdQuestions[1].title,
-                userAnswer: 'A. 用水灭火',
-                correctAnswer: createdQuestions[1].correctAnswer
-            }
-        ];
-        await MistakeRecord.insertMany(mistakes);
 
         console.log('✅ All data seeded successfully!');
         process.exit(0);

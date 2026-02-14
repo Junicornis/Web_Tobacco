@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
-import { Table, Card, Tag, Button, Modal, Input, message, Tooltip, Space, Progress, Badge, List, Checkbox } from 'antd';
-import { StopOutlined, BellOutlined, InfoCircleOutlined, CheckCircleOutlined, CloseCircleOutlined } from '@ant-design/icons';
+import { Table, Card, Tag, Button, Modal, Input, message, Tooltip, Space, Progress, List } from 'antd';
+import { StopOutlined, InfoCircleOutlined, CheckCircleOutlined, CloseCircleOutlined } from '@ant-design/icons';
 import axios from 'axios';
 
 const AdminTaskMonitor = () => {
@@ -11,11 +11,6 @@ const AdminTaskMonitor = () => {
   const [revokeModalVisible, setRevokeModalVisible] = useState(false);
   const [currentTask, setCurrentTask] = useState(null);
   const [revokeReason, setRevokeReason] = useState('');
-
-  // 提醒状态
-  const [remindModalVisible, setRemindModalVisible] = useState(false);
-  const [remindMessage, setRemindMessage] = useState('');
-  const [remindTargetUsers, setRemindTargetUsers] = useState([]); // 选中的用户ID列表
 
   useEffect(() => {
     fetchTasks();
@@ -43,27 +38,6 @@ const AdminTaskMonitor = () => {
       } catch (err) {
           message.error('撤销失败');
       }
-  };
-
-  const handleRemind = async () => {
-      try {
-          await axios.post(`/api/admin/tasks/${currentTask._id}/remind`, { 
-              message: remindMessage,
-              userIds: remindTargetUsers 
-          });
-          message.success('提醒消息已发送');
-          setRemindModalVisible(false);
-          setRemindMessage('');
-          setRemindTargetUsers([]);
-      } catch (err) {
-          message.error('发送失败');
-      }
-  };
-
-  const openRemindModal = (task, targetUserIds = []) => {
-      setCurrentTask(task);
-      setRemindTargetUsers(targetUserIds); // 如果为空，后端默认发给所有人
-      setRemindModalVisible(true);
   };
 
   const columns = [
@@ -120,13 +94,6 @@ const AdminTaskMonitor = () => {
                     <>
                         <Button 
                             size="small" 
-                            icon={<BellOutlined />} 
-                            onClick={() => openRemindModal(record)}
-                        >
-                            一键催办
-                        </Button>
-                        <Button 
-                            size="small" 
                             danger 
                             icon={<StopOutlined />} 
                             onClick={() => { setCurrentTask(record); setRevokeModalVisible(true); }}
@@ -170,16 +137,6 @@ const AdminTaskMonitor = () => {
                                         )}
                                     </div>
                                 </div>
-                                {!user.isCompleted && record.status === 'active' && (
-                                    <Button 
-                                        type="link" 
-                                        size="small" 
-                                        icon={<BellOutlined />}
-                                        onClick={() => openRemindModal(record, [user._id])}
-                                    >
-                                        提醒
-                                    </Button>
-                                )}
                             </div>
                         </Card>
                     </List.Item>
@@ -212,22 +169,6 @@ const AdminTaskMonitor = () => {
             placeholder="请输入撤销原因" 
             value={revokeReason}
             onChange={e => setRevokeReason(e.target.value)}
-          />
-      </Modal>
-
-      {/* 提醒弹窗 */}
-      <Modal 
-        title={`发送提醒 ${remindTargetUsers.length > 0 ? `(发给 ${remindTargetUsers.length} 人)` : '(发给所有未完成人员)'}`}
-        open={remindModalVisible} 
-        onOk={handleRemind} 
-        onCancel={() => setRemindModalVisible(false)}
-      >
-          <p>向指派员工发送信箱提醒：</p>
-          <Input.TextArea 
-            rows={3} 
-            placeholder="请输入提醒内容（留空则发送默认催办模板）" 
-            value={remindMessage}
-            onChange={e => setRemindMessage(e.target.value)}
           />
       </Modal>
     </Card>

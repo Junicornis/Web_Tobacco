@@ -1,27 +1,65 @@
 const express = require('express');
 const router = express.Router();
 const adminController = require('../controllers/adminController');
+const multer = require('multer');
+const fs = require('fs');
+const path = require('path');
+
+const scenesUploadDir = path.join(__dirname, '..', 'uploads', 'scenes');
+fs.mkdirSync(scenesUploadDir, { recursive: true });
+
+const storage = multer.diskStorage({
+    destination: (req, file, cb) => cb(null, scenesUploadDir),
+    filename: (req, file, cb) => {
+        const parsed = path.parse(file.originalname);
+        const safeBase = (parsed.name || 'scene').replace(/[^\w\-]+/g, '_');
+        cb(null, `${Date.now()}_${safeBase}${parsed.ext}`);
+    }
+});
+
+const uploadBundle = multer({
+    storage,
+    fileFilter: (req, file, cb) => {
+        const ext = path.extname(file.originalname).toLowerCase();
+        if (ext !== '.exe' && ext !== '.zip') {
+            return cb(new Error('仅支持 .exe 或 .zip 文件'));
+        }
+        cb(null, true);
+    },
+    limits: {
+        fileSize: 1024 * 1024 * 1024
+    }
+});
+
+const uploadBundleFields = (req, res, next) => {
+    uploadBundle.fields([{ name: 'exe', maxCount: 1 }, { name: 'file', maxCount: 1 }])(req, res, (err) => {
+        if (err) return res.status(400).json({ success: false, message: err.message });
+        next();
+    });
+};
 
 // 任务管理
 router.post('/create', adminController.createTask);
 router.get('/tasks', adminController.getAllTasks);
 router.put('/tasks/:id/revoke', adminController.revokeTask);
-router.post('/tasks/:id/remind', adminController.remindTask);
 
 // 用户端功能
 router.get('/my-tasks', adminController.getMyTasks);
-router.get('/my-notifications', adminController.getMyNotifications);
-router.put('/notifications/:id/read', adminController.readNotification);
-router.put('/notifications/read-all', adminController.readAllNotifications);
+
+// 场景导入
+router.get('/scenes', adminController.getScenes);
+router.post('/scenes', adminController.addScene);
+router.post('/scenes/upload', uploadBundleFields, adminController.addSceneUpload);
+router.delete('/scenes/:id', adminController.deleteScene);
 
 // 题库管理
 router.get('/questions', adminController.getQuestions);
 router.post('/questions', adminController.addQuestion);
 router.delete('/questions/:id', adminController.deleteQuestion);
 
-// 统计与记录
-router.get('/statistics', adminController.getStatistics);
 router.get('/users', adminController.getUsers);
-router.get('/training-records', adminController.getAllTrainingRecords);
+router.post('/users', adminController.createUser);
+router.put('/users/:id', adminController.updateUser);
+router.delete('/users/:id', adminController.deleteUser);
 
 module.exports = router;

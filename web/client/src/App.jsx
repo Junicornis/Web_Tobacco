@@ -9,13 +9,9 @@ import MainLayout from './layouts/MainLayout';
 import AdminTaskCreate from './pages/AdminTaskCreate';
 import AdminTaskMonitor from './pages/AdminTaskMonitor';
 import AdminUserList from './pages/AdminUserList';
-import AdminTrainingRecords from './pages/AdminTrainingRecords';
 import AdminQuestionManage from './pages/AdminQuestionManage';
-import AdminStatistics from './pages/AdminStatistics';
+import AdminSceneImport from './pages/AdminStatistics';
 import UserTaskList from './pages/UserTaskList';
-import UserInbox from './pages/UserInbox';
-import UserHistory from './pages/UserHistory';
-import UserMistakes from './pages/UserMistakes';
 import UserProfile from './pages/UserProfile';
 
 // Login Component (Internal)
@@ -83,20 +79,19 @@ function App() {
         <ConfigProvider locale={zhCN}>
             <Router>
                 <Routes>
-                    <Route path="/login" element={!user ? <Login onLogin={setUser} /> : <Navigate to={user.role === 'admin' ? '/admin/dashboard' : '/user/tasks'} />} />
+                    <Route path="/login" element={!user ? <Login onLogin={setUser} /> : <Navigate to={user.role === 'admin' ? '/admin/scenes' : '/user/tasks'} />} />
 
                     {/* Admin Routes */}
                     <Route path="/admin/*" element={
                         user && user.role === 'admin' ? (
                             <MainLayout role="admin" username={user.username} onLogout={handleLogout}>
                                 <Routes>
+                                    <Route path="scenes" element={<AdminSceneImport />} />
+                                    <Route path="users" element={<AdminUserList />} />
                                     <Route path="dashboard" element={<AdminTaskCreate />} />
                                     <Route path="monitor" element={<AdminTaskMonitor />} />
-                                    <Route path="users" element={<AdminUserList />} />
-                                    <Route path="records" element={<AdminTrainingRecords />} />
                                     <Route path="questions" element={<AdminQuestionManage />} />
-                                    <Route path="statistics" element={<AdminStatistics />} />
-                                    <Route path="*" element={<Navigate to="dashboard" />} />
+                                    <Route path="*" element={<Navigate to="scenes" />} />
                                 </Routes>
                             </MainLayout>
                         ) : <Navigate to="/login" />
@@ -108,9 +103,6 @@ function App() {
                             <MainLayout role="user" username={user.username} onLogout={handleLogout}>
                                 <Routes>
                                     <Route path="tasks" element={<UserTaskList user={user} />} />
-                                    <Route path="inbox" element={<UserInbox user={user} />} />
-                                    <Route path="history" element={<UserHistory user={user} />} />
-                                    <Route path="mistakes" element={<UserMistakes user={user} />} />
                                     <Route path="profile" element={<UserProfile user={user} />} />
                                     <Route path="*" element={<Navigate to="tasks" />} />
                                 </Routes>
