@@ -57,7 +57,7 @@ const AdminTaskCreate = () => {
   };
 
   return (
-    <Card title="下发新培训任务" bordered={false}>
+    <Card title="下发新培训任务" variant="borderless">
       <Form
         form={form}
         layout="vertical"

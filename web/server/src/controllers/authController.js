@@ -83,7 +83,7 @@ exports.launchUnity = (req, res) => {
         settled = true;
         try {
             child.unref();
-        } catch (_) {}
+        } catch (_) { }
         if (statusCode >= 400) return res.status(statusCode).json(payload);
         return res.json(payload);
     };

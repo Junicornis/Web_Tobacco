@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
-import { Table, Card, Tag, Button, Modal, Input, message, Tooltip, Space, Progress, List } from 'antd';
-import { StopOutlined, InfoCircleOutlined, CheckCircleOutlined, CloseCircleOutlined } from '@ant-design/icons';
+import { Table, Card, Tag, Button, Modal, Input, message, Tooltip, Space, Progress, Badge, Checkbox } from 'antd';
+import { StopOutlined, BellOutlined, InfoCircleOutlined, CheckCircleOutlined, CloseCircleOutlined } from '@ant-design/icons';
 import axios from 'axios';
 
 const AdminTaskMonitor = () => {
@@ -147,7 +147,7 @@ const AdminTaskMonitor = () => {
   };
 
   return (
-    <Card title="任务监控中心" bordered={false}>
+    <Card title="任务监控中心" variant="borderless">
       <Table 
         columns={columns} 
         dataSource={tasks} 

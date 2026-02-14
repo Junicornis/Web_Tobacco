@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { Card, List, Button, Tag, message, Typography, Space, Segmented } from 'antd';
+import { Card, Button, Tag, message, Typography, Badge, Row, Col, Spin, Empty } from 'antd';
 import { PlayCircleOutlined, ClockCircleOutlined } from '@ant-design/icons';
 import axios from 'axios';
 import { useNavigate } from 'react-router-dom';
@@ -122,7 +122,7 @@ const UserTaskList = ({ user }) => {
             />
           </List.Item>
         )}
-      />
+      </Spin>
     </Card>
   );
 };

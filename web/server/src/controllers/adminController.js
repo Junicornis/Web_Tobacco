@@ -188,7 +188,7 @@ exports.addSceneUpload = async (req, res) => {
 
         try {
             fs.unlinkSync(zipPath);
-        } catch (_) {}
+        } catch (_) { }
 
         const exeCandidates = [];
         const walk = (dir) => {

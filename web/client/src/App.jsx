@@ -11,6 +11,13 @@ import AdminTaskMonitor from './pages/AdminTaskMonitor';
 import AdminUserList from './pages/AdminUserList';
 import AdminQuestionManage from './pages/AdminQuestionManage';
 import AdminSceneImport from './pages/AdminStatistics';
+import KGLayout from './pages/KnowledgeGraph/KGLayout';
+import KGUploadPage from './pages/KnowledgeGraph/KGUploadPage';
+import KGBuildTasksPage from './pages/KnowledgeGraph/KGBuildTasksPage';
+import KGConfirmPage from './pages/KnowledgeGraph/KGConfirmPage';
+import KGOntologyPage from './pages/KnowledgeGraph/KGOntologyPage';
+import KGBrowserPage from './pages/KnowledgeGraph/KGBrowserPage';
+import KGSettingsPage from './pages/KnowledgeGraph/KGSettingsPage';
 import UserTaskList from './pages/UserTaskList';
 import UserProfile from './pages/UserProfile';
 
@@ -79,42 +86,70 @@ function App() {
         <ConfigProvider locale={zhCN}>
             <Router>
                 <Routes>
-                    <Route path="/login" element={!user ? <Login onLogin={setUser} /> : <Navigate to={user.role === 'admin' ? '/admin/scenes' : '/user/tasks'} />} />
+                    <Route
+                        path="/login"
+                        element={
+                            !user ? (
+                                <Login onLogin={setUser} />
+                            ) : (
+                                <Navigate to={user.role === 'admin' ? '/admin/scenes' : '/user/tasks'} />
+                            )
+                        }
+                    />
 
                     {/* Admin Routes */}
-                    <Route path="/admin/*" element={
-                        user && user.role === 'admin' ? (
-                            <MainLayout role="admin" username={user.username} onLogout={handleLogout}>
-                                <Routes>
-                                    <Route path="scenes" element={<AdminSceneImport />} />
-                                    <Route path="users" element={<AdminUserList />} />
-                                    <Route path="dashboard" element={<AdminTaskCreate />} />
-                                    <Route path="monitor" element={<AdminTaskMonitor />} />
-                                    <Route path="questions" element={<AdminQuestionManage />} />
-                                    <Route path="*" element={<Navigate to="scenes" />} />
-                                </Routes>
-                            </MainLayout>
-                        ) : <Navigate to="/login" />
-                    } />
+                    <Route
+                        path="/admin/*"
+                        element={
+                            user && user.role === 'admin' ? (
+                                <MainLayout role="admin" username={user.username} onLogout={handleLogout}>
+                                    <Routes>
+                                        <Route path="scenes" element={<AdminSceneImport />} />
+                                        <Route path="users" element={<AdminUserList />} />
+                                        <Route path="dashboard" element={<AdminTaskCreate />} />
+                                        <Route path="monitor" element={<AdminTaskMonitor />} />
+                                        <Route path="questions" element={<AdminQuestionManage />} />
+
+                                        <Route path="knowledge-graph/*" element={<KGLayout />}>
+                                            <Route path="upload" element={<KGUploadPage />} />
+                                            <Route path="tasks" element={<KGBuildTasksPage />} />
+                                            <Route path="tasks/:taskId" element={<KGConfirmPage />} />
+                                            <Route path="ontology" element={<KGOntologyPage />} />
+                                            <Route path="browser" element={<KGBrowserPage />} />
+                                            <Route path="settings" element={<KGSettingsPage />} />
+                                        </Route>
+
+                                        <Route path="*" element={<Navigate to="scenes" />} />
+                                    </Routes>
+                                </MainLayout>
+                            ) : (
+                                <Navigate to="/login" />
+                            )
+                        }
+                    />
 
                     {/* User Routes */}
-                    <Route path="/user/*" element={
-                        user && user.role === 'user' ? (
-                            <MainLayout role="user" username={user.username} onLogout={handleLogout}>
-                                <Routes>
-                                    <Route path="tasks" element={<UserTaskList user={user} />} />
-                                    <Route path="profile" element={<UserProfile user={user} />} />
-                                    <Route path="*" element={<Navigate to="tasks" />} />
-                                </Routes>
-                            </MainLayout>
-                        ) : <Navigate to="/login" />
-                    } />
+                    <Route
+                        path="/user/*"
+                        element={
+                            user && user.role === 'user' ? (
+                                <MainLayout role="user" username={user.username} onLogout={handleLogout}>
+                                    <Routes>
+                                        <Route path="tasks" element={<UserTaskList user={user} />} />
+                                        <Route path="profile" element={<UserProfile user={user} />} />
+                                        <Route path="*" element={<Navigate to="tasks" />} />
+                                    </Routes>
+                                </MainLayout>
+                            ) : (
+                                <Navigate to="/login" />
+                            )
+                        }
+                    />
 
                     <Route path="*" element={<Navigate to="/login" />} />
                 </Routes>
             </Router>
         </ConfigProvider>
     );
-}
 
-export default App;
+    export default App;
