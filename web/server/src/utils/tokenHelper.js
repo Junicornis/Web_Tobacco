@@ -32,13 +32,19 @@ if (!fs.existsSync(TEMP_DIR)) {
 
 const TOKEN_FILE_NAME = 'auth_token.json';
 
+exports.getTempDir = () => TEMP_DIR;
+
+exports.getTokenFilePath = () => path.join(TEMP_DIR, TOKEN_FILE_NAME);
+
 /**
  * 生成临时 Token 并写入文件 + 数据库
  */
 exports.generateAndWriteToken = async (user) => {
     const token = uuidv4();
     const now = Date.now();
-    const expireAt = new Date(now + 5 * 60 * 1000); // 5分钟有效期
+    const ttlMinutesRaw = process.env.UNITY_TOKEN_TTL_MINUTES || process.env.UNITY_TOKEN_TTL_MIN;
+    const ttlMinutes = Number.isFinite(Number(ttlMinutesRaw)) && Number(ttlMinutesRaw) > 0 ? Number(ttlMinutesRaw) : 12 * 60;
+    const expireAt = new Date(now + ttlMinutes * 60 * 1000);
 
     const tokenData = {
         token,

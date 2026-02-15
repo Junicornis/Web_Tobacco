@@ -9,7 +9,6 @@ import MainLayout from './layouts/MainLayout';
 import AdminTaskCreate from './pages/AdminTaskCreate';
 import AdminTaskMonitor from './pages/AdminTaskMonitor';
 import AdminUserList from './pages/AdminUserList';
-import AdminQuestionManage from './pages/AdminQuestionManage';
 import AdminSceneImport from './pages/AdminStatistics';
 import KGLayout from './pages/KnowledgeGraph/KGLayout';
 import KGUploadPage from './pages/KnowledgeGraph/KGUploadPage';
@@ -108,7 +107,6 @@ function App() {
                                         <Route path="users" element={<AdminUserList />} />
                                         <Route path="dashboard" element={<AdminTaskCreate />} />
                                         <Route path="monitor" element={<AdminTaskMonitor />} />
-                                        <Route path="questions" element={<AdminQuestionManage />} />
 
                                         <Route path="knowledge-graph/*" element={<KGLayout />}>
                                             <Route path="upload" element={<KGUploadPage />} />
@@ -137,7 +135,7 @@ function App() {
                                     <Routes>
                                         <Route path="tasks" element={<UserTaskList user={user} />} />
                                         <Route path="profile" element={<UserProfile user={user} />} />
-                                        <Route path="*" element={<Navigate to="tasks" />} />
+                                        <Route path="*" element={<Navigate to="/user/tasks" replace />} />
                                     </Routes>
                                 </MainLayout>
                             ) : (
@@ -151,5 +149,6 @@ function App() {
             </Router>
         </ConfigProvider>
     );
+}
 
-    export default App;
+export default App;

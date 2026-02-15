@@ -143,8 +143,8 @@ const AdminUserList = () => {
   ];
 
   return (
-    <Card 
-      title="人员管理" 
+    <Card
+      title="人员管理"
       extra={
         <div style={{ display: 'flex', gap: 12 }}>
           <Input
@@ -159,10 +159,10 @@ const AdminUserList = () => {
         </div>
       }
     >
-      <Table 
-        columns={columns} 
-        dataSource={users} 
-        rowKey="_id" 
+      <Table
+        columns={columns}
+        dataSource={users}
+        rowKey="_id"
         loading={loading}
         pagination={{ pageSize: 10 }}
       />

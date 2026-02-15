@@ -6,10 +6,8 @@ import {
   LogoutOutlined,
   UploadOutlined,
   ScheduleOutlined,
-  BookOutlined,
   IdcardOutlined,
-  BranchesOutlined,
-  ApartmentOutlined
+  BranchesOutlined
 } from '@ant-design/icons';
 import { useNavigate, useLocation } from 'react-router-dom';
 
@@ -29,13 +27,8 @@ const MainLayout = ({ children, role, onLogout, username }) => {
       label: '场景导入',
     },
     {
-      key: '/admin/users',
-      icon: <UserOutlined />,
-      label: '人员管理',
-    },
-    {
-      key: '/admin/questions',
-      icon: <BookOutlined />,
+      key: '/admin/knowledge-graph/browser',
+      icon: <BranchesOutlined />,
       label: '知识图谱',
     },
     {
@@ -48,10 +41,10 @@ const MainLayout = ({ children, role, onLogout, username }) => {
       ]
     },
     {
-      key: '/admin/knowledge-graph/browser',
-      icon: <BranchesOutlined />,
-      label: '知识图谱',
-    }
+      key: '/admin/users',
+      icon: <UserOutlined />,
+      label: '人员管理',
+    },
   ];
 
   const userItems = [
@@ -64,11 +57,6 @@ const MainLayout = ({ children, role, onLogout, username }) => {
       key: '/user/profile',
       icon: <IdcardOutlined />,
       label: '个人画像',
-    },
-    {
-      key: '/user/knowledge-graph',
-      icon: <BranchesOutlined />,
-      label: '知识图谱',
     }
   ];
 

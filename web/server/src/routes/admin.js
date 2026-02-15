@@ -46,6 +46,16 @@ router.put('/tasks/:id/revoke', adminController.revokeTask);
 // 用户端功能
 router.get('/my-tasks', adminController.getMyTasks);
 
+router.get('/unity-logs', (req, res) => {
+    const logs = req.app?.locals?.unityLogs;
+    res.json({ success: true, logs: Array.isArray(logs) ? logs : [] });
+});
+
+router.delete('/unity-logs', (req, res) => {
+    if (req.app?.locals) req.app.locals.unityLogs = [];
+    res.json({ success: true });
+});
+
 // 场景导入
 router.get('/scenes', adminController.getScenes);
 router.post('/scenes', adminController.addScene);

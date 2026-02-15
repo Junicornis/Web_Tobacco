@@ -2,7 +2,7 @@
     "name": "safety-training-client",
     "private": true,
     "version": "0.0.0",
-    "proxy": "http://localhost:3001",
+    "proxy": "http://localhost:3200",
     "type": "module",
     "scripts": {
         "dev": "vite",
@@ -13,6 +13,9 @@
         "@ant-design/icons": "^6.1.0",
         "antd": "^6.3.0",
         "axios": "^1.6.2",
+        "d3": "^7.9.0",
+        "framer-motion": "^12.34.0",
+        "gsap": "^3.14.2",
         "react": "^18.2.0",
         "react-dom": "^18.2.0",
         "react-router-dom": "^7.13.0"
