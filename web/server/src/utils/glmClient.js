@@ -6,6 +6,20 @@
 const GLM_API_URL = 'https://open.bigmodel.cn/api/paas/v4/chat/completions';
 const GLM_EMBEDDING_URL = 'https://open.bigmodel.cn/api/paas/v4/embeddings';
 
+async function fetchWithTimeout(url, options = {}, timeoutMs) {
+    const ms = Number(timeoutMs);
+    if (!Number.isFinite(ms) || ms <= 0) {
+        return fetch(url, options);
+    }
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), ms);
+    try {
+        return await fetch(url, { ...options, signal: controller.signal });
+    } finally {
+        clearTimeout(timer);
+    }
+}
+
 class GLMClient {
     constructor() {
         this.apiKey = process.env.GLM_API_KEY;
@@ -39,14 +53,23 @@ class GLMClient {
         }
 
         try {
-            const response = await fetch(GLM_API_URL, {
-                method: 'POST',
-                headers: {
-                    'Content-Type': 'application/json',
-                    'Authorization': `Bearer ${this.apiKey}`
-                },
-                body: JSON.stringify(requestBody)
-            });
+            const timeoutMs = parseInt(process.env.GLM_CHAT_TIMEOUT_MS || '90000', 10);
+            let response;
+            try {
+                response = await fetchWithTimeout(GLM_API_URL, {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                        'Authorization': `Bearer ${this.apiKey}`
+                    },
+                    body: JSON.stringify(requestBody)
+                }, timeoutMs);
+            } catch (e) {
+                if (e && e.name === 'AbortError') {
+                    throw new Error(`GLM Chat 超时（${timeoutMs}ms）`);
+                }
+                throw e;
+            }
 
             if (!response.ok) {
                 const errorData = await response.json().catch(() => ({}));
@@ -65,13 +88,27 @@ class GLMClient {
      * 提取知识（专用方法）
      * @param {string} documentText - 文档文本内容
      * @param {Object} ontologyHint - 可选的本体提示
+     * @param {Object} options - 可选参数
      * @returns {Promise<Object>} 抽取的知识结构
      */
-    async extractKnowledge(documentText, ontologyHint = null) {
+    async extractKnowledge(documentText, ontologyHint = null, options = {}) {
         const systemPrompt = this._buildExtractionSystemPrompt(ontologyHint);
+        const debugEnabled = options?.debug === true || process.env.ENABLE_LLM_DEBUG === 'true';
+        const previewChars = Number.isFinite(Number(options?.previewChars))
+            ? Math.max(parseInt(options.previewChars, 10), 200)
+            : Math.max(parseInt(process.env.LLM_DEBUG_PREVIEW_CHARS || '10000', 10), 200);
+        const redact = (input) => {
+            const s = String(input ?? '');
+            return s
+                .replace(/\b1\d{10}\b/g, '[REDACTED_PHONE]')
+                .replace(/\b\d{17}[\dXx]\b/g, '[REDACTED_ID]')
+                .replace(/[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}/g, '[REDACTED_EMAIL]')
+                .replace(/\bBearer\s+[A-Za-z0-9._-]+\b/gi, 'Bearer [REDACTED_TOKEN]')
+                .replace(/\b(sk|rk|pk)_[A-Za-z0-9_-]{10,}\b/g, '[REDACTED_KEY]');
+        };
         
         // 分段处理：如果文档太长，分块抽取
-        const maxChunkSize = 4000;
+        const maxChunkSize = 5000;
         const chunks = this._splitText(documentText, maxChunkSize);
         
         const allResults = {
@@ -84,16 +121,113 @@ class GLMClient {
         for (let i = 0; i < chunks.length; i++) {
             const chunk = chunks[i];
             const userPrompt = `文档片段 (${i + 1}/${chunks.length}):\n\n${chunk}`;
+            if (debugEnabled) {
+                const systemPreview = redact(systemPrompt).slice(0, previewChars);
+                const userPreview = redact(userPrompt).slice(0, previewChars);
+                try {
+                    if (typeof options?.onDebug === 'function') {
+                        options.onDebug({
+                            systemPrompt,
+                            userPrompt,
+                            systemPromptPreview: systemPreview,
+                            userPromptPreview: userPreview,
+                            systemPromptLength: String(systemPrompt).length,
+                            userPromptLength: String(userPrompt).length,
+                            chunkIndex: i,
+                            chunkCount: chunks.length
+                        });
+                    }
+                } catch (e) {}
+                console.log(
+                    JSON.stringify(
+                        {
+                            module: 'glm_extract',
+                            chunkIndex: i,
+                            chunkCount: chunks.length,
+                            systemPromptLength: String(systemPrompt).length,
+                            userPromptLength: String(userPrompt).length,
+                            systemPromptPreview: systemPreview,
+                            userPromptPreview: userPreview
+                        },
+                        null,
+                        2
+                    )
+                );
+            }
             
             const response = await this.chat([
                 { role: 'system', content: systemPrompt },
                 { role: 'user', content: userPrompt }
             ], {
                 temperature: 0.3,
-                max_tokens: 6000
+                max_tokens: 80000
             });
 
-            const content = response.choices[0]?.message?.content || '';
+            const choice = response?.choices?.[0] || null;
+            const message = choice?.message || null;
+            const originalContent = message?.content;
+            let content = message?.content ?? '';
+            if (Array.isArray(content)) {
+                content = content.map((part) => {
+                    if (typeof part === 'string') return part;
+                    if (part && typeof part === 'object') return part.text || part.content || '';
+                    return '';
+                }).join('');
+            } else if (content && typeof content === 'object') {
+                content = content.text || content.content || '';
+            }
+            if (typeof content !== 'string') {
+                content = '';
+            }
+            if (!content.trim()) {
+                const safeStringify = (v) => {
+                    try {
+                        return JSON.stringify(v);
+                    } catch (e) {
+                        return String(v ?? '');
+                    }
+                };
+                const systemPreview = debugEnabled ? redact(systemPrompt).slice(0, previewChars) : null;
+                const userPreview = debugEnabled ? redact(userPrompt).slice(0, previewChars) : null;
+                const originalContentPreview = redact(safeStringify(originalContent)).slice(0, previewChars);
+                const responsePreview = redact(safeStringify({
+                    id: response?.id || null,
+                    model: response?.model || null,
+                    created: response?.created || null,
+                    choices: Array.isArray(response?.choices)
+                        ? response.choices.slice(0, 2).map((c) => ({
+                            finish_reason: c?.finish_reason || null,
+                            index: c?.index ?? null,
+                            message: c?.message
+                                ? {
+                                    role: c.message.role,
+                                    contentType: typeof c.message.content,
+                                    contentIsArray: Array.isArray(c.message.content),
+                                    contentPreview: redact(safeStringify(c.message.content)).slice(0, previewChars)
+                                }
+                                : null
+                        }))
+                        : null,
+                    usage: response?.usage || null
+                })).slice(0, previewChars);
+                const err = new Error('抽取结果解析失败: 大模型返回空内容');
+                err.details = {
+                    chunkIndex: i,
+                    chunkCount: chunks.length,
+                    rawPreview: '',
+                    rawLength: 0,
+                    choiceCount: Array.isArray(response?.choices) ? response.choices.length : 0,
+                    finishReason: choice?.finish_reason || null,
+                    responseId: response?.id || null,
+                    originalContentPreview,
+                    systemPromptPreview: systemPreview,
+                    userPromptPreview: userPreview,
+                    systemPromptLength: debugEnabled ? String(systemPrompt).length : null,
+                    userPromptLength: debugEnabled ? String(userPrompt).length : null,
+                    responsePreview
+                };
+                throw err;
+            }
             const parsed = this._parseExtractionResult(content);
             if (!parsed.ok) {
                 const error = new Error(`抽取结果解析失败: ${parsed.errorMessage}`);
@@ -136,17 +270,26 @@ class GLMClient {
         const texts = Array.isArray(text) ? text : [text];
         
         try {
-            const response = await fetch(GLM_EMBEDDING_URL, {
-                method: 'POST',
-                headers: {
-                    'Content-Type': 'application/json',
-                    'Authorization': `Bearer ${this.apiKey}`
-                },
-                body: JSON.stringify({
-                    model: 'embedding-3',
-                    input: texts
-                })
-            });
+            const timeoutMs = parseInt(process.env.GLM_EMBED_TIMEOUT_MS || '20000', 10);
+            let response;
+            try {
+                response = await fetchWithTimeout(GLM_EMBEDDING_URL, {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                        'Authorization': `Bearer ${this.apiKey}`
+                    },
+                    body: JSON.stringify({
+                        model: 'embedding-3',
+                        input: texts
+                    })
+                }, timeoutMs);
+            } catch (e) {
+                if (e && e.name === 'AbortError') {
+                    throw new Error(`GLM Embedding 超时（${timeoutMs}ms）`);
+                }
+                throw e;
+            }
 
             if (!response.ok) {
                 const errorData = await response.json().catch(() => ({}));
@@ -185,7 +328,6 @@ class GLMClient {
 任务：从提供的安全培训文档中提取结构化知识，构建知识图谱。
 
 **输出格式要求（必须严格遵循以下JSON格式）：**
-\`\`\`json
 {
   "entityTypes": [
     {
@@ -220,7 +362,6 @@ class GLMClient {
     }
   ]
 }
-\`\`\`
 
 **实体类型指导（安全培训领域）：**
 - 风险单元：风险存在的具体区域或管理单元，如办公场所、档案室、配电间等
@@ -259,6 +400,7 @@ class GLMClient {
 7. **表格数据处理**：当遇到表格形式的数据，请务必**逐行解析**，不要合并不同行的数据，确保每一行的风险路径（单元-活动-危险-后果-措施）是完整的。
 
 请仅输出JSON格式的结果，不要有其他解释性文字。`;
+        prompt += `\n\n额外要求：不要使用 Markdown 代码块，不要输出 \`\`\` 或 \`\`\`json 包裹。`;
 
         if (ontologyHint) {
             prompt += `\n\n**参考本体定义（请优先遵循）：**\n`;
@@ -277,12 +419,19 @@ class GLMClient {
         const rawLength = raw.length;
         const rawPreview = raw.slice(0, 2000);
         try {
-            // 尝试提取JSON代码块
-            const jsonMatch = raw.match(/```json\s*([\s\S]*?)```/) || 
-                             raw.match(/```\s*([\s\S]*?)```/) ||
-                             [null, raw];
-            
-            const jsonStr = jsonMatch[1].trim();
+            let jsonCandidate = String(raw).trim();
+
+            jsonCandidate = jsonCandidate.replace(/^\uFEFF/, '').trim();
+            jsonCandidate = jsonCandidate.replace(/^```[a-zA-Z]*\s*/m, '').trim();
+            jsonCandidate = jsonCandidate.replace(/```$/m, '').trim();
+
+            const firstBrace = jsonCandidate.indexOf('{');
+            const lastBrace = jsonCandidate.lastIndexOf('}');
+            if (firstBrace === -1 || lastBrace === -1 || lastBrace < firstBrace) {
+                throw new Error('未找到完整的JSON对象边界');
+            }
+
+            const jsonStr = jsonCandidate.slice(firstBrace, lastBrace + 1).trim();
             const result = JSON.parse(jsonStr);
             
             return {

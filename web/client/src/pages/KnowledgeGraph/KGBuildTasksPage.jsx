@@ -12,7 +12,7 @@ import React, { useState, useEffect } from 'react';
 import { 
     Tag, Button, Space, Card, Typography, 
     message, Popconfirm, Badge, Pagination, Row, Col, Spin,
-    Radio, Empty, Tooltip, Progress
+    Radio, Empty, Tooltip, Progress, Drawer
 } from 'antd';
 import { 
     EyeOutlined, DeleteOutlined, ReloadOutlined,
@@ -26,6 +26,8 @@ import { useNavigate } from 'react-router-dom';
 import axios from 'axios';
 import AnimatedList from './AnimatedList';
 import { motion, AnimatePresence } from 'framer-motion';
+import ReactMarkdown from 'react-markdown';
+import remarkGfm from 'remark-gfm';
 
 const { Title, Text, Paragraph } = Typography;
 
@@ -41,6 +43,9 @@ const KGBuildTasksPage = () => {
     // Track expanded items
     const [expandedTaskIds, setExpandedTaskIds] = useState([]);
     const [viewMode, setViewMode] = useState('grid'); // 'list' | 'grid'
+    const [originalVisible, setOriginalVisible] = useState(false);
+    const [originalLoading, setOriginalLoading] = useState(false);
+    const [originalContent, setOriginalContent] = useState({ title: '原文预览', content: '' });
 
     useEffect(() => {
         fetchTasks();
@@ -72,6 +77,32 @@ const KGBuildTasksPage = () => {
         }
     };
 
+    const handleViewOriginal = async (taskId) => {
+        // 埋点
+        try {
+            console.log('Track event: original_view', { module: 'build_task', id: taskId });
+            // 如果有真实的埋点SDK，这里调用
+        } catch (e) { console.error(e); }
+
+        setOriginalVisible(true);
+        setOriginalLoading(true);
+        setOriginalContent({ title: '原文预览', content: '' });
+        try {
+            const res = await axios.get(`/api/kg/${taskId}/original`);
+            if (res.data.success) {
+                setOriginalContent({ title: '原文预览', content: res.data.content || '' });
+            } else {
+                message.warning('未找到原文内容');
+                setOriginalVisible(false);
+            }
+        } catch (error) {
+            message.error('获取原文失败: ' + (error.response?.data?.message || error.message));
+            setOriginalVisible(false);
+        } finally {
+            setOriginalLoading(false);
+        }
+    };
+
     const handleDelete = async (taskId) => {
         try {
             await axios.delete(`/api/kg/tasks/${taskId}`);
@@ -94,6 +125,7 @@ const KGBuildTasksPage = () => {
         const statusMap = {
             'pending': { color: 'default', icon: <ClockCircleOutlined />, text: '等待中' },
             'parsing': { color: 'processing', icon: <LoadingOutlined />, text: '解析中' },
+            'ready': { color: 'warning', icon: <ClockCircleOutlined />, text: '待开始' },
             'extracting': { color: 'processing', icon: <LoadingOutlined />, text: '抽取中' },
             'aligning': { color: 'processing', icon: <LoadingOutlined />, text: '对齐中' },
             'confirming': { color: 'warning', icon: <ClockCircleOutlined />, text: '待确认' },
@@ -199,6 +231,26 @@ const KGBuildTasksPage = () => {
                                     {task.status === 'confirming' ? '确认' : '查看'}
                                 </Button>
                             )}
+
+                            <Tooltip title={false ? "无权限查看原文" : ""}>
+                                <Button
+                                    size="small"
+                                    icon={<FileTextOutlined />}
+                                    disabled={false} // 模拟权限控制
+                                    onClick={(e) => {
+                                        e.stopPropagation();
+                                        handleViewOriginal(task._id);
+                                    }}
+                                    style={{
+                                        maxWidth: 80,
+                                        overflow: 'hidden',
+                                        textOverflow: 'ellipsis',
+                                        whiteSpace: 'nowrap'
+                                    }}
+                                >
+                                    查看原文
+                                </Button>
+                            </Tooltip>
                             
                             <Popconfirm
                                 title="确认删除"
@@ -254,6 +306,25 @@ const KGBuildTasksPage = () => {
         );
     };
 
+    const renderOriginalDrawer = () => (
+        <Drawer
+            title={originalContent.title}
+            width={800}
+            open={originalVisible}
+            onClose={() => setOriginalVisible(false)}
+        >
+            {originalLoading ? (
+                <div style={{ textAlign: 'center', padding: 24 }}>
+                    <Spin />
+                </div>
+            ) : (
+                <div style={{ maxHeight: '70vh', overflow: 'auto' }}>
+                    <ReactMarkdown remarkPlugins={[remarkGfm]}>{originalContent.content}</ReactMarkdown>
+                </div>
+            )}
+        </Drawer>
+    );
+
     // Grid View Item
     const renderGridItem = (task) => {
         return (
@@ -277,6 +348,12 @@ const KGBuildTasksPage = () => {
                             >
                                 <DeleteOutlined key="delete" style={{ color: '#ff4d4f' }} />
                             </Popconfirm>,
+                            <Tooltip title="查看原文">
+                                <FileTextOutlined 
+                                    key="original"
+                                    onClick={() => handleViewOriginal(task._id)}
+                                />
+                            </Tooltip>,
                             (task.status === 'confirming' || task.status === 'completed') ? (
                                 <Tooltip title={task.status === 'confirming' ? '去确认' : '查看详情'}>
                                     <EyeOutlined 
@@ -400,6 +477,7 @@ const KGBuildTasksPage = () => {
                     </>
                 )}
             </div>
+            {renderOriginalDrawer()}
         </div>
     );
 };

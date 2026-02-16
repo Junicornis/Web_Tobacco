@@ -53,6 +53,10 @@ const draftRelationSchema = new mongoose.Schema({
 }, { _id: false });
 
 const graphBuildTaskSchema = new mongoose.Schema({
+    clientTaskId: {
+        type: String,
+        default: null
+    },
     taskType: {
         type: String,
         enum: ['auto_extract', 'user_confirmed'],
@@ -60,7 +64,7 @@ const graphBuildTaskSchema = new mongoose.Schema({
     },
     status: {
         type: String,
-        enum: ['pending', 'parsing', 'extracting', 'aligning', 'confirming', 'building', 'completed', 'failed'],
+        enum: ['pending', 'parsing', 'ready', 'extracting', 'aligning', 'confirming', 'building', 'completed', 'failed'],
         default: 'pending'
     },
     progress: {
@@ -117,7 +121,11 @@ const graphBuildTaskSchema = new mongoose.Schema({
         rawPreview: { type: String, default: null },
         rawLength: { type: Number, default: null },
         chunkIndex: { type: Number, default: null },
-        chunkCount: { type: Number, default: null }
+        chunkCount: { type: Number, default: null },
+        systemPromptPreview: { type: String, default: null },
+        systemPromptLength: { type: Number, default: null },
+        userPromptPreview: { type: String, default: null },
+        userPromptLength: { type: Number, default: null }
     },
     extractionMeta: {
         model: { type: String, default: null },
@@ -154,6 +162,7 @@ const graphBuildTaskSchema = new mongoose.Schema({
 });
 
 // 索引
+graphBuildTaskSchema.index({ clientTaskId: 1 }, { unique: true, sparse: true });
 graphBuildTaskSchema.index({ createdBy: 1, status: 1 });
 graphBuildTaskSchema.index({ createdAt: -1 });
 

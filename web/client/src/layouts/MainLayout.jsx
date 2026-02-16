@@ -14,6 +14,7 @@ import {
   ApartmentOutlined
 } from '@ant-design/icons';
 import { useNavigate, useLocation } from 'react-router-dom';
+import SmartQABot from '../components/SmartQABot';
 
 const { Header, Sider, Content } = Layout;
 
@@ -140,6 +141,7 @@ const MainLayout = ({ children, role, onLogout, username }) => {
         <Content style={{ margin: '0px 0px 0px 0px', padding: 12, minHeight: 280, background: colorBgContainer, borderRadius: borderRadiusLG }}>
           {childrenWithProps}
         </Content>
+        <SmartQABot />
       </Layout>
     </Layout>
   );

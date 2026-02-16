@@ -23,6 +23,25 @@ class ExtractionService {
         // 更新任务状态为抽取中
         await this._updateTaskStatus(taskId, 'extracting', 30, '正在提取知识...');
 
+        const debugEnabled = process.env.ENABLE_LLM_DEBUG === 'true';
+        let debugWritten = false;
+        let debugCache = null;
+        const onDebug = (dbg) => {
+            if (!debugEnabled) return;
+            if (debugWritten) return;
+            if (dbg?.chunkIndex !== 0) return;
+            debugWritten = true;
+            debugCache = dbg;
+            GraphBuildTask.findByIdAndUpdate(taskId, {
+                $set: {
+                    'extractionDebug.systemPromptPreview': dbg.systemPromptPreview || null,
+                    'extractionDebug.systemPromptLength': dbg.systemPromptLength ?? null,
+                    'extractionDebug.userPromptPreview': dbg.userPromptPreview || null,
+                    'extractionDebug.userPromptLength': dbg.userPromptLength ?? null
+                }
+            }).catch(() => {});
+        };
+
         try {
             // 获取本体提示（如果使用现有本体）
             let ontologyHint = null;
@@ -51,7 +70,10 @@ class ExtractionService {
             });
 
             // 调用大模型抽取
-            const extractionResult = await glmClient.extractKnowledge(combinedText, ontologyHint);
+            const extractionResult = await glmClient.extractKnowledge(combinedText, ontologyHint, {
+                debug: debugEnabled,
+                onDebug
+            });
             const validation = this.validateExtractionResult(extractionResult);
             if (!validation.valid) {
                 const message = validation.errors.join('；') || '知识抽取未得到有效结果';
@@ -106,33 +128,32 @@ class ExtractionService {
                 confidence: relation.confidence || 0.8
             }));
 
-            // 更新任务状态
             await GraphBuildTask.findByIdAndUpdate(taskId, {
-                status: 'aligning',
-                progress: 60,
-                stageMessage: '正在进行实体对齐...',
-                draftOntology: {
-                    entityTypes: extractionResult.entityTypes,
-                    relationTypes: extractionResult.relationTypes
-                },
-                draftEntities: enrichedEntities,
-                draftRelations: enrichedRelations,
-                extractionDebug: {
-                    parseError: null,
-                    rawPreview: null,
-                    rawLength: null,
-                    chunkIndex: null,
-                    chunkCount: null
-                },
-                extractionMeta: {
-                    model: 'glm-4.7',
-                    fileCount: files.length,
-                    inputChars: combinedText.length,
-                    chunkCount: extractionResult.meta?.chunkCount ?? null,
-                    entityCount: enrichedEntities.length,
-                    relationCount: enrichedRelations.length,
-                    startedAt,
-                    finishedAt: new Date()
+                $set: {
+                    status: 'aligning',
+                    progress: 60,
+                    stageMessage: '正在进行实体对齐...',
+                    draftOntology: {
+                        entityTypes: extractionResult.entityTypes,
+                        relationTypes: extractionResult.relationTypes
+                    },
+                    draftEntities: enrichedEntities,
+                    draftRelations: enrichedRelations,
+                    'extractionDebug.parseError': null,
+                    'extractionDebug.rawPreview': null,
+                    'extractionDebug.rawLength': null,
+                    'extractionDebug.chunkIndex': null,
+                    'extractionDebug.chunkCount': null,
+                    extractionMeta: {
+                        model: 'glm-4.7',
+                        fileCount: files.length,
+                        inputChars: combinedText.length,
+                        chunkCount: extractionResult.meta?.chunkCount ?? null,
+                        entityCount: enrichedEntities.length,
+                        relationCount: enrichedRelations.length,
+                        startedAt,
+                        finishedAt: new Date()
+                    }
                 }
             });
 
@@ -160,7 +181,11 @@ class ExtractionService {
                     rawPreview: details.rawPreview || null,
                     rawLength: details.rawLength ?? null,
                     chunkIndex: details.chunkIndex ?? null,
-                    chunkCount: details.chunkCount ?? null
+                    chunkCount: details.chunkCount ?? null,
+                    systemPromptPreview: debugCache?.systemPromptPreview || null,
+                    systemPromptLength: debugCache?.systemPromptLength ?? null,
+                    userPromptPreview: debugCache?.userPromptPreview || null,
+                    userPromptLength: debugCache?.userPromptLength ?? null
                 };
             }
             await GraphBuildTask.findByIdAndUpdate(taskId, { $set });

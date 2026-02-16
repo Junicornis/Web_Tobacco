@@ -5,20 +5,47 @@ function normalizeBaseUrl(url) {
     return url.endsWith('/') ? url.slice(0, -1) : url;
 }
 
+async function fetchWithTimeout(url, options = {}, timeoutMs) {
+    const ms = Number(timeoutMs);
+    if (!Number.isFinite(ms) || ms <= 0) {
+        return fetch(url, options);
+    }
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), ms);
+    try {
+        return await fetch(url, { ...options, signal: controller.signal });
+    } finally {
+        clearTimeout(timer);
+    }
+}
+
 async function getEmbeddingWithOllama(text) {
     const baseUrl = normalizeBaseUrl(process.env.OLLAMA_BASE_URL || 'http://127.0.0.1:11434');
     const model = process.env.OLLAMA_EMBED_MODEL || 'bge-m3:latest';
+    const timeoutMs = parseInt(process.env.OLLAMA_EMBED_TIMEOUT_MS || '20000', 10);
 
     const input = Array.isArray(text) ? text : [text];
 
-    const response = await fetch(`${baseUrl}/api/embed`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-            model,
-            input
-        })
-    });
+    let response;
+    try {
+        response = await fetchWithTimeout(
+            `${baseUrl}/api/embed`,
+            {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    model,
+                    input
+                })
+            },
+            timeoutMs
+        );
+    } catch (e) {
+        if (e && e.name === 'AbortError') {
+            throw new Error(`Ollama Embedding 超时（${timeoutMs}ms），请检查 Ollama 是否可用：${baseUrl}`);
+        }
+        throw e;
+    }
 
     if (!response.ok) {
         const errorData = await response.json().catch(() => ({}));

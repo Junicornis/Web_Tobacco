@@ -9,21 +9,25 @@
  * 5. 完成后跳转预览确认页面
  */
 
-import React, { useState, useEffect } from 'react';
+import React, { useMemo, useEffect, useState } from 'react';
+import { createPortal } from 'react-dom';
 import { 
-    Card, Upload, Button, Steps, Progress, 
+    Card, Upload, Button, Steps, 
     Alert, Table, Tag, Typography, Tooltip,
-    Radio, Select, message, Spin, Empty, Divider,
-    Row, Col, Space
+    Radio, Select, message, Spin, Empty, InputNumber,
+    Row, Col, Space, Drawer
 } from 'antd';
+import ReactMarkdown from 'react-markdown';
+import remarkGfm from 'remark-gfm';
 import { 
     InboxOutlined, FileExcelOutlined, FileWordOutlined, 
     FilePdfOutlined, FileTextOutlined, LoadingOutlined,
     CheckCircleOutlined, SettingOutlined, CloudUploadOutlined,
-    RocketOutlined
+    FileSearchOutlined, EyeOutlined
 } from '@ant-design/icons';
 import { useNavigate } from 'react-router-dom';
 import axios from 'axios';
+import { getKgRequestTimeoutMs, setKgRequestTimeoutMs } from '../../utils/kgRequestTimeout';
 
 const { Dragger } = Upload;
 const { Title, Text, Paragraph } = Typography;
@@ -54,17 +58,25 @@ const FILE_CONFIG = {
 
 const KGUploadPage = () => {
     const navigate = useNavigate();
-    
     const [fileList, setFileList] = useState([]);
     const [ontologyMode, setOntologyMode] = useState('auto');
     const [selectedOntology, setSelectedOntology] = useState(null);
     const [ontologies, setOntologies] = useState([]);
     
     // 状态管理
-    const [status, setStatus] = useState('idle'); // idle | uploading | processing | completed | error
-    const [progress, setProgress] = useState({ percent: 0, message: '' });
+    const [status, setStatus] = useState('idle'); // idle | processing | success
     const [currentTaskId, setCurrentTaskId] = useState(null);
-    const [errorMsg, setErrorMsg] = useState('');
+    const [mask, setMask] = useState({ visible: false, state: 'loading', text: '正在解析，请稍候…' });
+    const [requestRef, setRequestRef] = useState(null);
+    const [parsedFiles, setParsedFiles] = useState([]);
+    const [viewFileDrawerVisible, setViewFileDrawerVisible] = useState(false);
+    const [viewFileContent, setViewFileContent] = useState({ title: '', content: '' });
+    const [fileLoading, setFileLoading] = useState(false);
+    const [requestTimeoutSec, setRequestTimeoutSec] = useState(() => {
+        const ms = getKgRequestTimeoutMs();
+        return Math.round(ms / 1000);
+    });
+    const requestTimeoutMs = useMemo(() => Math.max(10000, requestTimeoutSec * 1000), [requestTimeoutSec]);
 
     // 加载本体列表
     useEffect(() => {
@@ -94,6 +106,206 @@ const KGUploadPage = () => {
         return 'txt';
     };
 
+    const generateTaskId = () => {
+        if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') {
+            return crypto.randomUUID();
+        }
+        return `${Date.now()}-${Math.random().toString(16).slice(2)}`;
+    };
+
+    const isSupportedFile = (name) => {
+        const ext = String(name || '').split('.').pop().toLowerCase();
+        return ['xlsx', 'xls', 'docx', 'doc', 'pdf', 'txt'].includes(ext);
+    };
+
+    const validateSelectedFiles = (newFileList) => {
+        if (!Array.isArray(newFileList) || newFileList.length === 0) return false;
+        for (const f of newFileList) {
+            const raw = f?.originFileObj;
+            if (!raw) return false;
+            const isLt100M = raw.size / 1024 / 1024 < 100;
+            if (!isLt100M) {
+                message.error(`${raw.name} 超过100MB限制`);
+                return false;
+            }
+            if (!isSupportedFile(raw.name)) {
+                message.error(`不支持的文件格式: ${raw.name}`);
+                return false;
+            }
+        }
+        if (ontologyMode === 'existing' && !selectedOntology) {
+            message.warning('请选择目标本体后再上传');
+            return false;
+        }
+        return true;
+    };
+
+    useEffect(() => {
+        if (!mask.visible) return undefined;
+        const prevOverflow = document.body.style.overflow;
+        document.body.style.overflow = 'hidden';
+
+        const prevent = (e) => {
+            e.preventDefault();
+            e.stopPropagation();
+        };
+        const preventKey = (e) => {
+            e.preventDefault();
+            e.stopPropagation();
+        };
+
+        window.addEventListener('wheel', prevent, { passive: false, capture: true });
+        window.addEventListener('touchmove', prevent, { passive: false, capture: true });
+        window.addEventListener('keydown', preventKey, true);
+        window.addEventListener('keypress', preventKey, true);
+        window.addEventListener('keyup', preventKey, true);
+
+        return () => {
+            document.body.style.overflow = prevOverflow;
+            window.removeEventListener('wheel', prevent, { capture: true });
+            window.removeEventListener('touchmove', prevent, { capture: true });
+            window.removeEventListener('keydown', preventKey, true);
+            window.removeEventListener('keypress', preventKey, true);
+            window.removeEventListener('keyup', preventKey, true);
+        };
+    }, [mask.visible]);
+
+    useEffect(() => {
+        return () => {
+            if (requestRef) requestRef.abort();
+        };
+    }, [requestRef]);
+
+    const startParse = async (newFileList) => {
+        if (!validateSelectedFiles(newFileList)) return;
+        if (requestRef) requestRef.abort();
+
+        const controller = new AbortController();
+        setRequestRef(controller);
+
+        const clientTaskId = generateTaskId();
+        setCurrentTaskId(clientTaskId);
+        setStatus('processing');
+        setParsedFiles([]);
+        setMask({ visible: true, state: 'loading', text: '正在解析，请稍候…' });
+
+        try {
+            const formData = new FormData();
+            newFileList.forEach(file => {
+                formData.append('files', file.originFileObj);
+            });
+            formData.append('ontologyMode', ontologyMode);
+            if (ontologyMode === 'existing' && selectedOntology) {
+                formData.append('ontologyId', selectedOntology);
+            }
+            formData.append('clientTaskId', clientTaskId);
+
+            try {
+                console.log('[KG] upload-and-parse request', {
+                    url: '/api/kg/upload-and-parse',
+                    params: { wait: 1, timeoutSec: 60 },
+                    clientTaskId,
+                    ontologyMode,
+                    ontologyId: ontologyMode === 'existing' ? (selectedOntology || null) : null,
+                    files: newFileList.map(f => ({
+                        name: f?.name,
+                        size: f?.size,
+                        type: f?.type
+                    }))
+                });
+            } catch (e) {}
+
+            const uploadRes = await axios.post('/api/kg/upload-and-parse', formData, {
+                params: { wait: 1, timeoutSec: 60 },
+                timeout: requestTimeoutMs,
+                signal: controller.signal
+            });
+            if (!uploadRes.data?.success) {
+                throw new Error(uploadRes.data?.message || '上传失败');
+            }
+
+            const taskId = uploadRes.data?.taskId || clientTaskId;
+            setCurrentTaskId(taskId);
+            setParsedFiles(Array.isArray(uploadRes.data?.files) ? uploadRes.data.files : []);
+            setMask({ visible: false, state: 'loading', text: '正在解析，请稍候…' });
+            setStatus('success');
+        } catch (error) {
+            if (error?.code === 'ERR_CANCELED') return;
+            try {
+                console.error('[KG] upload-and-parse failed', {
+                    message: error?.message,
+                    code: error?.code,
+                    status: error?.response?.status,
+                    data: error?.response?.data
+                });
+            } catch (e) {}
+            setMask({ visible: true, state: 'error', text: '原文解析失败，请重新上传' });
+            setStatus('idle');
+            setTimeout(() => {
+                setMask({ visible: false, state: 'loading', text: '正在解析原文，请稍候…' });
+                setCurrentTaskId(null);
+                setFileList([]);
+                setParsedFiles([]);
+            }, 3000);
+        }
+    };
+
+    const handleStartBuild = async () => {
+        if (!currentTaskId) return;
+        if (requestRef) requestRef.abort();
+        const controller = new AbortController();
+        setRequestRef(controller);
+        setMask({ visible: true, state: 'loading', text: '正在开始构建知识图谱，请稍候…' });
+        try {
+            try {
+                console.log('[KG] start-build request', {
+                    url: `/api/kg/tasks/${encodeURIComponent(String(currentTaskId))}/start-build`,
+                    taskId: currentTaskId
+                });
+            } catch (e) {}
+            const res = await axios.post(`/api/kg/tasks/${encodeURIComponent(String(currentTaskId))}/start-build`, null, {
+                timeout: requestTimeoutMs,
+                signal: controller.signal
+            });
+            if (!res.data?.success) {
+                throw new Error(res.data?.message || '开始构建失败');
+            }
+            setMask({ visible: false, state: 'loading', text: '正在开始构建知识图谱，请稍候…' });
+            navigate(`/admin/knowledge-graph/tasks/${encodeURIComponent(String(currentTaskId))}`);
+        } catch (error) {
+            if (error?.code === 'ERR_CANCELED') return;
+            try {
+                console.error('[KG] start-build failed', {
+                    message: error?.message,
+                    code: error?.code,
+                    status: error?.response?.status,
+                    data: error?.response?.data
+                });
+            } catch (e) {}
+            setMask({ visible: true, state: 'error', text: '开始构建失败，请稍后重试' });
+            setTimeout(() => {
+                setMask({ visible: false, state: 'loading', text: '正在解析原文，请稍候…' });
+            }, 3000);
+        }
+    };
+
+    const handleViewFile = async (fileId, filename) => {
+        if (!fileId) return;
+        setViewFileDrawerVisible(true);
+        setViewFileContent({ title: filename || '原文', content: '' });
+        setFileLoading(true);
+        try {
+            const res = await axios.get(`/api/kg/file/${encodeURIComponent(String(fileId))}/content`, { timeout: requestTimeoutMs });
+            if (!res.data?.success) throw new Error(res.data?.message || '加载失败');
+            const content = res.data?.data?.content || '';
+            setViewFileContent({ title: res.data?.data?.filename || filename || '原文', content });
+        } catch (error) {
+            message.error('加载原文失败: ' + (error?.response?.data?.message || error.message));
+        } finally {
+            setFileLoading(false);
+        }
+    };
+
     // 文件上传配置
     const uploadProps = {
         multiple: true,
@@ -109,93 +321,17 @@ const KGUploadPage = () => {
             }
             return false;
         },
-        onChange: ({ fileList: newFileList }) => {
+        onChange: ({ file, fileList: newFileList }) => {
             setFileList(newFileList);
+            if (mask.visible) return;
+            if (file?.status === 'removed') return;
+            const hasSelected = Boolean(newFileList?.[0]?.originFileObj);
+            if (!hasSelected) return;
+            startParse(newFileList);
         },
         onDrop: (e) => {
             console.log('Dropped files', e.dataTransfer.files);
         },
-    };
-
-    // 开始构建流程
-    const handleStartBuild = async () => {
-        if (fileList.length === 0) {
-            message.warning('请至少上传一个文件');
-            return;
-        }
-
-        setStatus('uploading');
-        setProgress({ percent: 10, message: '正在上传文件...' });
-
-        try {
-            const formData = new FormData();
-            fileList.forEach(file => {
-                formData.append('files', file.originFileObj);
-            });
-            formData.append('ontologyMode', ontologyMode);
-            if (ontologyMode === 'existing' && selectedOntology) {
-                formData.append('ontologyId', selectedOntology);
-            }
-
-            setProgress({ percent: 30, status: 'active', message: '正在解析文档...' });
-            
-            const response = await axios.post('/api/kg/upload-and-extract', formData);
-
-            if (!response.data.success) {
-                throw new Error(response.data.message);
-            }
-
-            setCurrentTaskId(response.data.taskId);
-            setStatus('processing');
-
-            // 轮询等待结果
-            await pollExtractResult(response.data.taskId);
-
-        } catch (error) {
-            setStatus('error');
-            setErrorMsg(error.message || '构建失败');
-            message.error('构建失败: ' + error.message);
-        }
-    };
-
-    // 轮询抽取结果
-    const pollExtractResult = async (taskId) => {
-        const maxAttempts = 120; // 最多轮询120次 (约10分钟)
-        
-        for (let i = 0; i < maxAttempts; i++) {
-            await new Promise(resolve => setTimeout(resolve, 5000));
-            
-            try {
-                const res = await axios.get(`/api/kg/extract-result/${taskId}`);
-                const data = res.data;
-
-                if (data.status === 'completed' || data.status === 'confirming') {
-                    setProgress({ 
-                        percent: 100, 
-                        message: '抽取完成！' 
-                    });
-                    setStatus('completed');
-                    message.success('文档解析完成，正在进入确认页面...');
-                    
-                    setTimeout(() => {
-                        navigate(`/admin/knowledge-graph/tasks/${taskId}`);
-                    }, 1000);
-                    return;
-                } else if (data.status === 'failed') {
-                    throw new Error(data.errorMessage || '抽取失败');
-                } else {
-                    const percent = 30 + Math.floor((data.progress || 0) * 0.7);
-                    setProgress({ 
-                        percent, 
-                        message: data.stageMessage || 'AI正在抽取知识...' 
-                    });
-                }
-            } catch (error) {
-                throw error;
-            }
-        }
-        
-        throw new Error('处理超时，请稍后查看任务列表');
     };
 
     // 文件列表列定义
@@ -239,31 +375,49 @@ const KGUploadPage = () => {
         {
             title: '操作',
             key: 'action',
-            width: 80,
+            width: 200,
             align: 'right',
-            render: (_, record, index) => (
-                <Button 
-                    type="text" 
-                    danger 
-                    size="small"
-                    onClick={() => {
-                        const newList = fileList.filter((_, i) => i !== index);
-                        setFileList(newList);
-                    }}
-                >
-                    移除
-                </Button>
-            )
+            render: (_, record, index) => {
+                const parsed = Array.isArray(parsedFiles) ? parsedFiles[index] : null;
+                const canView = Boolean(parsed?.fileId);
+                const canRemove = status === 'idle';
+                return (
+                    <Space size={8}>
+                        <Button
+                            type="link"
+                            size="small"
+                            icon={<EyeOutlined />}
+                            disabled={!canView}
+                            onClick={() => handleViewFile(parsed.fileId, parsed.filename || record?.name)}
+                        >
+                            查看原文
+                        </Button>
+                        <Button
+                            type="text"
+                            danger
+                            size="small"
+                            disabled={!canRemove}
+                            onClick={() => {
+                                const newList = fileList.filter((_, i) => i !== index);
+                                setFileList(newList);
+                            }}
+                        >
+                            移除
+                        </Button>
+                    </Space>
+                );
+            }
         }
     ];
 
     // 重置状态
     const handleReset = () => {
+        if (requestRef) requestRef.abort();
         setFileList([]);
         setStatus('idle');
-        setProgress({ percent: 0, message: '' });
         setCurrentTaskId(null);
-        setErrorMsg('');
+        setParsedFiles([]);
+        setMask({ visible: false, state: 'loading', text: '正在解析，请稍候…' });
     };
 
     // 自定义样式
@@ -276,8 +430,35 @@ const KGUploadPage = () => {
         flexDirection: 'column'
     };
 
+    const overlayNode = mask.visible ? createPortal(
+        <div
+            style={{
+                position: 'fixed',
+                inset: 0,
+                zIndex: 9999,
+                background: 'rgba(255,255,255,0.75)',
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'center'
+            }}
+        >
+            <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 16 }}>
+                {mask.state === 'loading' ? (
+                    <Spin indicator={<LoadingOutlined style={{ fontSize: 40 }} spin />} />
+                ) : (
+                    <FileSearchOutlined style={{ fontSize: 40, color: '#ff4d4f' }} />
+                )}
+                <Text style={{ fontSize: 16, color: mask.state === 'loading' ? '#333' : '#ff4d4f' }}>
+                    {mask.text}
+                </Text>
+            </div>
+        </div>,
+        document.body
+    ) : null;
+
     return (
         <div style={containerStyle}>
+            {overlayNode}
             {/* 顶部标题栏 */}
             <div style={{ marginBottom: 24, textAlign: 'center' }}>
                 <Title level={3} style={{ marginBottom: 8 }}>
@@ -290,15 +471,10 @@ const KGUploadPage = () => {
                 <div style={{ maxWidth: 1000, margin: '24px auto 0' }}>
                     <Steps 
                         size="small"
-                        current={status === 'idle' ? 0 : status === 'completed' ? 2 : 1} 
+                        current={status === 'idle' ? 0 : 1} 
                         items={[
-                            { title: '上传文档', description: '' },
-                            { 
-                                title: 'AI 智能抽取', 
-                                description: '',
-                                icon: status === 'processing' ? <LoadingOutlined /> : null
-                            },
-                            { title: '人工确认', description: '' }
+                            { title: '上传并解析', description: '选择文件后自动开始解析' },
+                            { title: '结果确认', description: currentTaskId ? `任务ID: ${String(currentTaskId).slice(-8)}` : '' }
                         ]}
                     />
                 </div>
@@ -308,177 +484,160 @@ const KGUploadPage = () => {
                 style={{ flex: 1, display: 'flex', flexDirection: 'column', overflow: 'hidden', boxShadow: '0 4px 12px rgba(0,0,0,0.05)' }} 
                 styles={{ body: { flex: 1, display: 'flex', flexDirection: 'column', padding: 0, overflow: 'hidden' } }}
             >
-                {status === 'idle' ? (
-                    <div style={{ display: 'flex', flexDirection: 'column', height: '100%' }}>
-                        {/* 1. 配置区域 */}
-                        <div style={{ padding: '24px 32px', background: '#fafafa', borderBottom: '1px solid #f0f0f0' }}>
-                            <Space align="start" size={32}>
-                                <div style={{ display: 'flex', alignItems: 'center', gap: 8, height: 32 }}>
-                                    <SettingOutlined style={{ color: '#1890ff' }} />
-                                    <Text strong>构建配置:</Text>
+                <div style={{ display: 'flex', flexDirection: 'column', height: '100%' }}>
+                    <div style={{ padding: '24px 32px', background: '#fafafa', borderBottom: '1px solid #f0f0f0' }}>
+                        <Space align="start" size={32}>
+                            <div style={{ display: 'flex', alignItems: 'center', gap: 8, height: 32 }}>
+                                <SettingOutlined style={{ color: '#1890ff' }} />
+                                <Text strong>构建配置:</Text>
+                            </div>
+                            <Radio.Group
+                                value={ontologyMode}
+                                onChange={(e) => setOntologyMode(e.target.value)}
+                            >
+                                <Space direction="horizontal" size={24}>
+                                    <Radio value="auto">
+                                        <Space direction="vertical" size={0}>
+                                            <Text>自动推断模式</Text>
+                                            <Text type="secondary" style={{ fontSize: 12 }}>AI 自动识别实体类型</Text>
+                                        </Space>
+                                    </Radio>
+                                    <Radio value="existing">
+                                        <Space direction="vertical" size={0}>
+                                            <Text>使用已有本体</Text>
+                                            <Text type="secondary" style={{ fontSize: 12 }}>基于预定义模式构建</Text>
+                                        </Space>
+                                    </Radio>
+                                </Space>
+                            </Radio.Group>
+
+                            {ontologyMode === 'existing' && (
+                                <div style={{ width: 240 }}>
+                                    <Select
+                                        placeholder="请选择目标本体"
+                                        style={{ width: '100%' }}
+                                        value={selectedOntology}
+                                        onChange={setSelectedOntology}
+                                        options={ontologies}
+                                        status={!selectedOntology ? 'warning' : ''}
+                                    />
                                 </div>
-                                <Radio.Group 
-                                    value={ontologyMode} 
-                                    onChange={(e) => setOntologyMode(e.target.value)}
-                                >
-                                    <Space direction="horizontal" size={24}>
-                                        <Radio value="auto">
-                                            <Space direction="vertical" size={0}>
-                                                <Text>自动推断模式</Text>
-                                                <Text type="secondary" style={{ fontSize: 12 }}>AI 自动识别实体类型</Text>
-                                            </Space>
-                                        </Radio>
-                                        <Radio value="existing">
-                                            <Space direction="vertical" size={0}>
-                                                <Text>使用已有本体</Text>
-                                                <Text type="secondary" style={{ fontSize: 12 }}>基于预定义模式构建</Text>
-                                            </Space>
-                                        </Radio>
-                                    </Space>
-                                </Radio.Group>
+                            )}
 
-                                {ontologyMode === 'existing' && (
-                                    <div style={{ width: 240 }}>
-                                        <Select
-                                            placeholder="请选择目标本体"
-                                            style={{ width: '100%' }}
-                                            value={selectedOntology}
-                                            onChange={setSelectedOntology}
-                                            options={ontologies}
-                                            status={!selectedOntology ? 'warning' : ''}
-                                        />
-                                    </div>
-                                )}
-                            </Space>
-                        </div>
-
-                        {/* 2. 上传与列表区域 */}
-                        <div style={{ flex: 1, padding: '24px 32px', overflow: 'hidden' }}>
-                            <Row gutter={24} style={{ height: '100%' }}>
-                                {/* 左侧上传区 */}
-                                <Col span={10} style={{ height: '100%' }}>
-                                    <Dragger 
-                                        {...uploadProps} 
-                                        style={{ 
-                                            padding: '32px', 
-                                            background: '#fcfcfc', 
-                                            border: '1px dashed #d9d9d9', 
-                                            borderRadius: 8, 
-                                            height: '100%'
+                            <div style={{ width: 200 }}>
+                                <Space direction="vertical" size={4}>
+                                    <Tooltip title="影响上传解析、开始构建、查看原文等请求的等待时间">
+                                        <Text type="secondary" style={{ fontSize: 12 }}>请求超时（秒）</Text>
+                                    </Tooltip>
+                                    <InputNumber
+                                        min={10}
+                                        max={600}
+                                        step={5}
+                                        value={requestTimeoutSec}
+                                        onChange={(v) => {
+                                            const sec = Number(v);
+                                            if (!Number.isFinite(sec)) return;
+                                            const ms = setKgRequestTimeoutMs(sec * 1000);
+                                            setRequestTimeoutSec(Math.round(ms / 1000));
                                         }}
-                                    >
-                                        <div style={{ display: 'flex', flexDirection: 'column', justifyContent: 'center', height: '100%', minHeight: 300 }}>
-                                            <p className="ant-upload-drag-icon">
-                                                <InboxOutlined style={{ fontSize: 48, color: '#1890ff' }} />
-                                            </p>
-                                            <p className="ant-upload-text" style={{ fontSize: 18, color: '#333', marginTop: 16 }}>
-                                                点击或拖拽文件到此区域
-                                            </p>
-                                            <p className="ant-upload-hint" style={{ color: '#666', marginTop: 8 }}>
-                                                支持批量上传 Excel、Word、PDF、TXT 文档<br/>(单文件最大 100MB)
-                                            </p>
-                                        </div>
-                                    </Dragger>
-                                </Col>
+                                        style={{ width: '100%' }}
+                                        size="small"
+                                    />
+                                </Space>
+                            </div>
+                        </Space>
+                    </div>
 
-                                {/* 右侧列表区 */}
-                                <Col span={14} style={{ height: '100%', display: 'flex', flexDirection: 'column' }}>
-                                    <div style={{ marginBottom: 16, display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                                        <Text strong>待处理文件 ({fileList.length})</Text>
+                    <div style={{ flex: 1, padding: '24px 32px', overflow: 'hidden' }}>
+                        <Row gutter={24} style={{ height: '100%' }}>
+                            <Col span={10} style={{ height: '100%' }}>
+                                <Dragger
+                                    {...uploadProps}
+                                    style={{
+                                        padding: '32px',
+                                        background: '#fcfcfc',
+                                        border: '1px dashed #d9d9d9',
+                                        borderRadius: 8,
+                                        height: '100%'
+                                    }}
+                                >
+                                    <div style={{ display: 'flex', flexDirection: 'column', justifyContent: 'center', height: '100%', minHeight: 300 }}>
+                                        <p className="ant-upload-drag-icon">
+                                            <InboxOutlined style={{ fontSize: 48, color: '#1890ff' }} />
+                                        </p>
+                                        <p className="ant-upload-text" style={{ fontSize: 18, color: '#333', marginTop: 16 }}>
+                                            点击或拖拽文件到此区域
+                                        </p>
+                                        <p className="ant-upload-hint" style={{ color: '#666', marginTop: 8 }}>
+                                            选择文件后将自动开始解析（单文件最大 100MB）
+                                        </p>
+                                    </div>
+                                </Dragger>
+                            </Col>
+
+                            <Col span={14} style={{ height: '100%', display: 'flex', flexDirection: 'column' }}>
+                                <div style={{ marginBottom: 16, display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                                    <Text strong>待处理文件 ({fileList.length})</Text>
+                                    <Space size={12}>
+                                        <Button
+                                            type="primary"
+                                            size="small"
+                                            disabled={status !== 'success' || !currentTaskId}
+                                            onClick={handleStartBuild}
+                                        >
+                                            开始构建知识图谱
+                                        </Button>
                                         {fileList.length > 0 && (
                                             <Button type="link" onClick={() => setFileList([])} size="small">清空列表</Button>
                                         )}
-                                    </div>
-                                    
-                                    <div style={{ flex: 1, overflow: 'hidden', border: '1px solid #f0f0f0', borderRadius: 8, position: 'relative' }}>
-                                        {fileList.length > 0 ? (
-                                            <div style={{ height: '100%', overflow: 'auto' }}>
-                                                <Table 
-                                                    columns={fileColumns} 
-                                                    dataSource={fileList.map((f, i) => ({ ...f, key: i }))} 
-                                                    pagination={false}
-                                                    size="middle"
-                                                    style={{ border: 'none' }}
-                                                />
-                                            </div>
-                                        ) : (
-                                            <div style={{ height: '100%', display: 'flex', justifyContent: 'center', alignItems: 'center' }}>
-                                                <Empty 
-                                                    image={Empty.PRESENTED_IMAGE_SIMPLE} 
-                                                    description={<Text type="secondary">暂无文件，请先上传</Text>} 
-                                                />
-                                            </div>
-                                        )}
-                                    </div>
-                                </Col>
-                            </Row>
-                        </div>
-
-                        {/* 3. 底部操作栏 */}
-                        <div style={{ 
-                            padding: '16px 32px', 
-                            borderTop: '1px solid #f0f0f0', 
-                            textAlign: 'right',
-                            background: '#fff'
-                        }}>
-                            <Space size={16}>
-                                <div style={{ marginRight: 16 }}>
-                                    <Text type="secondary">预计消耗 Token: </Text>
-                                    <Text strong>~{fileList.reduce((acc, f) => acc + (f.size/1000), 0).toFixed(0)} k</Text>
+                                        <Button onClick={handleReset} size="small">重置</Button>
+                                    </Space>
                                 </div>
-                                <Button onClick={handleReset}>重置</Button>
-                                <Button 
-                                    type="primary" 
-                                    size="large"
-                                    icon={<RocketOutlined />}
-                                    disabled={fileList.length === 0 || (ontologyMode === 'existing' && !selectedOntology)}
-                                    onClick={handleStartBuild}
-                                    style={{ padding: '0 32px' }}
-                                >
-                                    开始构建知识图谱
-                                </Button>
-                            </Space>
-                        </div>
+                                
+                                <div style={{ flex: 1, overflow: 'hidden', border: '1px solid #f0f0f0', borderRadius: 8, position: 'relative' }}>
+                                    {fileList.length > 0 ? (
+                                        <div style={{ height: '100%', overflow: 'auto' }}>
+                                            <Table
+                                                columns={fileColumns}
+                                                dataSource={fileList.map((f, i) => ({ ...f, key: i }))}
+                                                pagination={false}
+                                                size="middle"
+                                                style={{ border: 'none' }}
+                                            />
+                                        </div>
+                                    ) : (
+                                        <div style={{ height: '100%', display: 'flex', justifyContent: 'center', alignItems: 'center' }}>
+                                            <Empty
+                                                image={Empty.PRESENTED_IMAGE_SIMPLE}
+                                                description={<Text type="secondary">暂无文件，请先上传</Text>}
+                                            />
+                                        </div>
+                                    )}
+                                </div>
+                            </Col>
+                        </Row>
+                    </div>
+                </div>
+            </Card>
+
+            <Drawer
+                title={viewFileContent.title || '原文'}
+                open={viewFileDrawerVisible}
+                width={720}
+                onClose={() => setViewFileDrawerVisible(false)}
+            >
+                {fileLoading ? (
+                    <div style={{ textAlign: 'center', marginTop: 50 }}>
+                        <Spin size="large" tip="加载中..." />
                     </div>
                 ) : (
-                    /* 4. 处理中/结果状态 */
-                    <div style={{ flex: 1, display: 'flex', flexDirection: 'column', justifyContent: 'center', alignItems: 'center', padding: 48 }}>
-                        {status === 'error' ? (
-                            <div style={{ width: 600, textAlign: 'center' }}>
-                                <Alert
-                                    message="构建任务失败"
-                                    description={errorMsg}
-                                    type="error"
-                                    showIcon
-                                    style={{ marginBottom: 24, textAlign: 'left' }}
-                                />
-                                <Button type="primary" onClick={handleReset} size="large">返回重试</Button>
-                            </div>
-                        ) : (
-                            <div style={{ width: 600, textAlign: 'center' }}>
-                                <div style={{ marginBottom: 32 }}>
-                                    <Spin size="large" />
-                                </div>
-                                <Title level={4} style={{ marginBottom: 16 }}>
-                                    {status === 'completed' ? '处理完成' : 'AI 正在努力工作中...'}
-                                </Title>
-                                <Progress 
-                                    percent={progress.percent} 
-                                    status="active" 
-                                    strokeColor={{ from: '#108ee9', to: '#87d068' }}
-                                    strokeWidth={12}
-                                />
-                                <div style={{ marginTop: 24, padding: '16px', background: '#f5f5f5', borderRadius: 8 }}>
-                                    <Text type="secondary">{progress.message}</Text>
-                                </div>
-                                <Paragraph type="secondary" style={{ marginTop: 24 }}>
-                                    请勿关闭页面，这可能需要几分钟时间...
-                                </Paragraph>
-                            </div>
-                        )}
+                    <div className="markdown-body" style={{ padding: '0 12px' }}>
+                        <ReactMarkdown remarkPlugins={[remarkGfm]}>
+                            {viewFileContent.content}
+                        </ReactMarkdown>
                     </div>
                 )}
-            </Card>
+            </Drawer>
         </div>
     );
 };

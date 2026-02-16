@@ -40,7 +40,7 @@ class DocumentParser {
 
             workbook.SheetNames.forEach(sheetName => {
                 const worksheet = workbook.Sheets[sheetName];
-                const rawData = xlsx.utils.sheet_to_json(worksheet, { header: 1 });
+                const rawData = xlsx.utils.sheet_to_json(worksheet, { header: 1, defval: '' });
                 
                 if (rawData.length === 0) return;
 
@@ -51,7 +51,7 @@ class DocumentParser {
                 const data = [];
                 for (let i = dataStartRow; i < rawData.length; i++) {
                     const row = rawData[i];
-                    if (row.every(cell => !cell)) continue; // 跳过空行
+                    if (row.every(cell => cell === null || cell === undefined || String(cell).trim() === '')) continue; // 跳过空行
                     
                     const rowData = {};
                     headers.forEach((header, idx) => {
@@ -222,39 +222,149 @@ class DocumentParser {
             return { headers: rows[0].map((_, i) => `Column${i + 1}`), dataStartRow: 0 };
         }
 
-        // 启发式规则：
-        // 1. 第一行通常是表头
-        // 2. 表头通常是字符串，而数据可能包含数字
-        // 3. 表头通常较短
-        
-        const firstRow = rows[0];
-        const secondRow = rows[1];
+        const normalizeHeaderCell = (cell, fallback) => {
+            const v = String(cell ?? '').replace(/\s+/g, ' ').trim();
+            return v || fallback;
+        };
 
-        // 检查第一行是否像表头
-        const looksLikeHeader = firstRow.every((cell, idx) => {
-            const cellStr = String(cell || '').trim();
-            const secondCell = secondRow[idx];
-            
-            // 如果第一行是字符串，第二行是数字，很可能是表头
-            if (cellStr && secondCell !== undefined) {
-                const isFirstString = isNaN(Number(cellStr));
-                const isSecondNumber = !isNaN(Number(secondCell));
-                return isFirstString || !isSecondNumber;
+        const isRowMostlyTitle = (row) => {
+            if (!Array.isArray(row)) return true;
+            const nonEmpty = row.filter(c => String(c ?? '').trim() !== '');
+            if (nonEmpty.length === 0) return true;
+            if (row.length <= 2 && nonEmpty.length <= 2) {
+                const t = String(nonEmpty[0] ?? '').trim();
+                if (t.length >= 8) return true;
+                if (/表|目录|清单|汇总/.test(t)) return true;
             }
-            return true;
-        });
+            return false;
+        };
 
-        if (looksLikeHeader) {
-            return {
-                headers: firstRow.map((cell, i) => String(cell || `Column${i + 1}`).trim()),
-                dataStartRow: 1
-            };
+        if (isRowMostlyTitle(rows[0]) && Array.isArray(rows[1]) && rows[1].length >= 4) {
+            const hdr = rows[1];
+            const sub = rows[2];
+            const hasSub = Array.isArray(sub) && sub.length > 0;
+            const subNonEmpty = hasSub ? sub.filter(c => String(c ?? '').trim() !== '') : [];
+            const hasLikelySub = hasSub && subNonEmpty.length >= 2 && subNonEmpty.length / Math.max(sub.length, 1) <= 0.6;
+            const filled = [];
+            let last = '';
+            hdr.forEach((cell, i) => {
+                const raw = String(cell ?? '').replace(/\s+/g, ' ').trim();
+                if (raw) last = raw;
+                filled[i] = raw || last || `Column${i + 1}`;
+            });
+            const merged = filled.map((base, i) => {
+                if (!hasLikelySub) return base;
+                const subCell = String(sub[i] ?? '').replace(/\s+/g, ' ').trim();
+                if (!subCell) return base;
+                if (subCell === base) return base;
+                return `${base}-${subCell}`;
+            });
+            const unique = [];
+            const seen = new Map();
+            merged.forEach((h, idx) => {
+                const key = String(h || `Column${idx + 1}`).trim() || `Column${idx + 1}`;
+                const count = (seen.get(key) || 0) + 1;
+                seen.set(key, count);
+                unique.push(count === 1 ? key : `${key}_${count}`);
+            });
+            return { headers: unique, dataStartRow: 1 + (hasLikelySub ? 2 : 1) };
         }
 
-        // 默认生成列名
+        const scoreRowAsHeader = (row, nextRow) => {
+            const cells = Array.isArray(row) ? row : [];
+            const colCount = cells.length;
+            const nonEmptyCells = cells.filter(c => String(c ?? '').trim() !== '');
+            const nonEmptyCount = nonEmptyCells.length;
+            if (colCount === 0 || nonEmptyCount === 0) return -1;
+
+            const stringCount = nonEmptyCells.filter(c => isNaN(Number(String(c).trim()))).length;
+            const stringRatio = stringCount / nonEmptyCount;
+            const avgLen = nonEmptyCells.reduce((s, c) => s + String(c ?? '').trim().length, 0) / nonEmptyCount;
+            const longCellCount = nonEmptyCells.filter(c => String(c ?? '').trim().length >= 20).length;
+
+            const keywordHits = nonEmptyCells.reduce((n, c) => {
+                const t = String(c ?? '').trim();
+                if (!t) return n;
+                if (/序号|风险|单元|作业|活动|危险|触发|过程|后果|控制|措施|部门|等级|评价|分值|严重性|可能性/.test(t)) {
+                    return n + 1;
+                }
+                return n;
+            }, 0);
+
+            let penalty = 0;
+            if (colCount <= 2 && avgLen >= 10) penalty += 3;
+            if (colCount <= 2 && /表|目录|清单|汇总/.test(String(nonEmptyCells[0] ?? ''))) penalty += 2;
+            penalty += Math.min(longCellCount, 6);
+            const firstNonEmpty = nonEmptyCells[0];
+            if (firstNonEmpty !== undefined) {
+                const s = String(firstNonEmpty).trim();
+                if (s && !isNaN(Number(s))) penalty += 3;
+            }
+
+            let nextHasNumeric = 0;
+            if (nextRow && Array.isArray(nextRow)) {
+                nextHasNumeric = nextRow.some(c => {
+                    const s = String(c ?? '').trim();
+                    if (!s) return false;
+                    return !isNaN(Number(s));
+                }) ? 1 : 0;
+            }
+
+            const base = Math.min(colCount, 40) + nonEmptyCount;
+            return base + (stringRatio >= 0.6 ? 3 : 0) + nextHasNumeric + Math.min(keywordHits, 6) - penalty;
+        };
+
+        const scanLimit = Math.min(rows.length, 8);
+        let bestIdx = 0;
+        let bestScore = -1;
+        for (let i = 0; i < scanLimit; i++) {
+            const s = scoreRowAsHeader(rows[i], rows[i + 1]);
+            if (s > bestScore) {
+                bestScore = s;
+                bestIdx = i;
+            }
+        }
+
+        const headerRow = rows[bestIdx] || [];
+        const nextRow = rows[bestIdx + 1] || [];
+
+        const hasLikelySubHeader = (() => {
+            if (!Array.isArray(nextRow) || nextRow.length === 0) return false;
+            const nonEmpty = nextRow.filter(c => String(c ?? '').trim() !== '');
+            if (nonEmpty.length < 2) return false;
+            const mostlyEmpty = nonEmpty.length / Math.max(nextRow.length, 1) <= 0.6;
+            const mostlyString = nonEmpty.filter(c => isNaN(Number(String(c).trim()))).length / nonEmpty.length >= 0.8;
+            return mostlyEmpty && mostlyString;
+        })();
+
+        const filledBaseHeaders = [];
+        let lastBase = '';
+        headerRow.forEach((cell, i) => {
+            const raw = String(cell ?? '').replace(/\s+/g, ' ').trim();
+            if (raw) lastBase = raw;
+            filledBaseHeaders[i] = raw || lastBase || `Column${i + 1}`;
+        });
+
+        const mergedHeaders = filledBaseHeaders.map((base, i) => {
+            if (!hasLikelySubHeader) return base;
+            const sub = normalizeHeaderCell(nextRow[i], '');
+            if (!sub) return base;
+            if (sub === base) return base;
+            return `${base}-${sub}`;
+        });
+
+        const uniqueHeaders = [];
+        const seen = new Map();
+        mergedHeaders.forEach((h, idx) => {
+            const key = String(h || `Column${idx + 1}`).trim() || `Column${idx + 1}`;
+            const count = (seen.get(key) || 0) + 1;
+            seen.set(key, count);
+            uniqueHeaders.push(count === 1 ? key : `${key}_${count}`);
+        });
+
         return {
-            headers: firstRow.map((_, i) => `Column${i + 1}`),
-            dataStartRow: 0
+            headers: uniqueHeaders,
+            dataStartRow: bestIdx + (hasLikelySubHeader ? 2 : 1)
         };
     }
 
@@ -292,7 +402,9 @@ class DocumentParser {
             // 优化格式，使其更易读
             const entries = headers.map(header => {
                 const val = row[header];
-                return val ? `${header}: ${val}` : null;
+                if (val === null || val === undefined) return null;
+                const s = typeof val === 'string' ? val.trim() : String(val);
+                return s ? `${header}: ${s}` : null;
             }).filter(Boolean);
             text += entries.join(' | ') + '\n\n'; // 使用双换行符，以便分块逻辑将其视为独立段落
         });

@@ -1,0 +1,20 @@
+.smart-qa-bot-card .ant-card-head {
+  min-height: 48px;
+  padding: 0 16px;
+}
+
+.smart-qa-bot-card .ant-card-body {
+  padding: 0;
+}
+
+/* 简单的 Markdown 样式 */
+.markdown-body p {
+  margin-bottom: 8px;
+}
+.markdown-body p:last-child {
+  margin-bottom: 0;
+}
+.markdown-body ul, .markdown-body ol {
+  padding-left: 20px;
+  margin-bottom: 8px;
+}

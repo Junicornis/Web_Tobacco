@@ -9,27 +9,33 @@
  * 5. 提交确认生成图谱
  */
 
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { 
     Card, Tabs, Tag, Button, Badge, Space, 
     Modal, Form, Input, Select, Alert, Tooltip, 
     Typography, Row, Col, message, Popconfirm, Spin,
-    Checkbox
+    Checkbox, Drawer
 } from 'antd';
+import ReactMarkdown from 'react-markdown';
+import remarkGfm from 'remark-gfm';
 import { 
     MergeCellsOutlined, EditOutlined, DeleteOutlined,
     PlusOutlined, CheckCircleOutlined, ExclamationCircleOutlined,
-    NodeIndexOutlined, ApartmentOutlined, SaveOutlined
+    NodeIndexOutlined, ApartmentOutlined, SaveOutlined,
+    FileTextOutlined, FilePdfOutlined, FileWordOutlined, FileExcelOutlined,
+    EyeOutlined
 } from '@ant-design/icons';
 import { useParams, useNavigate } from 'react-router-dom';
 import axios from 'axios';
 import AnimatedList from './AnimatedList';
+import { getKgRequestTimeoutMs } from '../../utils/kgRequestTimeout';
 
 const { Title, Text } = Typography;
 
 const KGConfirmPage = () => {
     const { taskId } = useParams();
     const navigate = useNavigate();
+    const pollTimerRef = useRef(null);
     
     const [loading, setLoading] = useState(true);
     const [taskData, setTaskData] = useState(null);
@@ -41,17 +47,49 @@ const KGConfirmPage = () => {
     const [submitting, setSubmitting] = useState(false);
 
     const [form] = Form.useForm();
+    const [viewFileDrawerVisible, setViewFileDrawerVisible] = useState(false);
+    const [viewFileContent, setViewFileContent] = useState({ title: '', content: '' });
+    const [fileLoading, setFileLoading] = useState(false);
 
     // 加载任务数据
     useEffect(() => {
         fetchTaskData();
+        return () => {
+            if (pollTimerRef.current) clearTimeout(pollTimerRef.current);
+        };
     }, [taskId]);
+
+    useEffect(() => {
+        setSelectedRowKeys((prev) => {
+            if (!Array.isArray(prev) || prev.length === 0) return prev;
+            const keySet = new Set(entities.map((e) => e.key));
+            const next = prev.filter((k) => keySet.has(k));
+            if (next.length === prev.length) return prev;
+            return next;
+        });
+    }, [entities]);
 
     const fetchTaskData = async () => {
         try {
-            setLoading(true);
-            const res = await axios.get(`/api/kg/extract-result/${taskId}`);
-            const data = res.data;
+            if (pollTimerRef.current) clearTimeout(pollTimerRef.current);
+            const showLoading = !taskData;
+            if (showLoading) setLoading(true);
+            let data = null;
+            try {
+                const res = await axios.get(`/api/kg/extract-result/${taskId}`, {
+                    params: { wait: 1, timeoutSec: 60 },
+                    timeout: getKgRequestTimeoutMs()
+                });
+                data = res.data;
+            } catch (err) {
+                const status = err?.response?.status;
+                if (status === 408) {
+                    const res = await axios.get(`/api/kg/extract-result/${taskId}`, { timeout: getKgRequestTimeoutMs() });
+                    data = res.data;
+                } else {
+                    throw err;
+                }
+            }
             
             const draftEntities = Array.isArray(data?.draftEntities) ? data.draftEntities : [];
             const draftRelations = Array.isArray(data?.draftRelations) ? data.draftRelations : [];
@@ -59,7 +97,14 @@ const KGConfirmPage = () => {
             setTaskData(data ?? null);
             setEntities(draftEntities.map(e => ({ ...e, key: e.id })));
             setRelations(draftRelations.map(r => ({ ...r, key: r.id })));
-            setLoading(false);
+            if (showLoading) setLoading(false);
+
+            const status = data?.status;
+            if (status && !['ready', 'confirming', 'completed', 'failed'].includes(status)) {
+                pollTimerRef.current = setTimeout(() => {
+                    fetchTaskData();
+                }, 2000);
+            }
         } catch (error) {
             message.error('加载任务数据失败: ' + error.message);
             setLoading(false);
@@ -339,6 +384,33 @@ const KGConfirmPage = () => {
         }
     };
 
+    // 查看原文
+    const handleViewFile = async (fileId) => {
+        // 埋点
+        try {
+             console.log('Track event: original_view', { module: 'kg_workbench', id: fileId });
+        } catch (e) { }
+
+        setViewFileContent({ title: '原文预览', content: '' });
+        setViewFileDrawerVisible(true);
+        setFileLoading(true);
+
+        try {
+            const res = await axios.get(`/api/kg/${fileId}/original`, { timeout: getKgRequestTimeoutMs() });
+            if (res.data.success) {
+                setViewFileContent({
+                    title: '原文预览',
+                    content: res.data.content
+                });
+            }
+        } catch (error) {
+            message.error('原文加载失败');
+            setViewFileDrawerVisible(false); // Close on error? Or keep open with error state? User said "return message.error".
+        } finally {
+            setFileLoading(false);
+        }
+    };
+
     if (loading) {
         return (
             <div style={{ textAlign: 'center', padding: '50px' }}>
@@ -367,8 +439,21 @@ const KGConfirmPage = () => {
         );
     }
 
+    const getFileIcon = (filename) => {
+        const ext = filename?.split('.').pop().toLowerCase();
+        if (['xlsx', 'xls'].includes(ext)) return <FileExcelOutlined style={{ color: '#52c41a', fontSize: 24 }} />;
+        if (['docx', 'doc'].includes(ext)) return <FileWordOutlined style={{ color: '#1890ff', fontSize: 24 }} />;
+        if (ext === 'pdf') return <FilePdfOutlined style={{ color: '#ff4d4f', fontSize: 24 }} />;
+        return <FileTextOutlined style={{ color: '#faad14', fontSize: 24 }} />;
+    };
+
     const newCount = entities.filter(e => e.alignmentSuggestion?.type === 'new').length;
     const mergeCount = entities.filter(e => e.alignmentSuggestion?.type === 'merge').length;
+    const selectedCount = selectedRowKeys.length;
+    const totalEntityCount = entities.length;
+    const allEntityKeys = entities.map((e) => e.key);
+    const allSelected = totalEntityCount > 0 && selectedCount === totalEntityCount;
+    const indeterminate = selectedCount > 0 && selectedCount < totalEntityCount;
 
     return (
         <div>
@@ -393,7 +478,7 @@ const KGConfirmPage = () => {
                 </Col>
                 <Col span={6}>
                     <Card>
-                        <Statistic title="关系数" value={relations.length} />
+                        <Statistic title="文件数" value={taskData.files?.length || 0} />
                     </Card>
                 </Col>
             </Row>
@@ -426,14 +511,34 @@ const KGConfirmPage = () => {
                             key: 'entities',
                             label: `实体 (${entities.length})`,
                             children: (
-                                <AnimatedList 
-                                    items={entities} 
-                                    renderItem={renderEntityItem}
-                                    showGradients 
-                                    enableArrowNavigation 
-                                    displayScrollbar 
-                                    height="500px"
-                                />
+                                <div>
+                                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12 }}>
+                                        <Checkbox
+                                            indeterminate={indeterminate}
+                                            checked={allSelected}
+                                            onChange={(e) => {
+                                                const checked = e.target.checked;
+                                                setSelectedRowKeys(checked ? allEntityKeys : []);
+                                            }}
+                                        >
+                                            全选
+                                        </Checkbox>
+                                        <Space size={12}>
+                                            <Text type="secondary">已选 {selectedCount} / {totalEntityCount}</Text>
+                                            <Button size="small" onClick={() => setSelectedRowKeys([])} disabled={selectedCount === 0}>
+                                                清空
+                                            </Button>
+                                        </Space>
+                                    </div>
+                                    <AnimatedList 
+                                        items={entities} 
+                                        renderItem={renderEntityItem}
+                                        showGradients 
+                                        enableArrowNavigation 
+                                        displayScrollbar 
+                                        height="500px"
+                                    />
+                                </div>
                             )
                         },
                         {
@@ -448,6 +553,37 @@ const KGConfirmPage = () => {
                                     displayScrollbar 
                                     height="500px"
                                 />
+                            )
+                        },
+                        {
+                            key: 'files',
+                            label: `源文件 (${taskData.files?.length || 0})`,
+                            children: (
+                                <Row gutter={[16, 16]}>
+                                    {taskData.files?.map(file => (
+                                        <Col span={8} key={file.fileId}>
+                                            <Card 
+                                                size="small"
+                                                hoverable
+                                                actions={[
+                                                    <Button 
+                                                        type="link" 
+                                                        icon={<EyeOutlined />} 
+                                                        onClick={() => handleViewFile(file.fileId)}
+                                                    >
+                                                        查看原文
+                                                    </Button>
+                                                ]}
+                                            >
+                                                <Card.Meta
+                                                    avatar={getFileIcon(file.filename)}
+                                                    title={file.filename}
+                                                    description={<Tag>{file.fileType}</Tag>}
+                                                />
+                                            </Card>
+                                        </Col>
+                                    ))}
+                                </Row>
                             )
                         },
                         {
@@ -507,6 +643,27 @@ const KGConfirmPage = () => {
                     </Form.Item>
                 </Form>
             </Modal>
+
+            {/* 查看原文抽屉 */}
+            <Drawer
+                title={viewFileContent.title}
+                placement="right"
+                onClose={() => setViewFileDrawerVisible(false)}
+                open={viewFileDrawerVisible}
+                width={800}
+            >
+                {fileLoading ? (
+                    <div style={{ textAlign: 'center', marginTop: 50 }}>
+                        <Spin size="large" tip="加载中..." />
+                    </div>
+                ) : (
+                    <div className="markdown-body" style={{ padding: '0 12px' }}>
+                        <ReactMarkdown remarkPlugins={[remarkGfm]}>
+                            {viewFileContent.content}
+                        </ReactMarkdown>
+                    </div>
+                )}
+            </Drawer>
         </div>
     );
 };

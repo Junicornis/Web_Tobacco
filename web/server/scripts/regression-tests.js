@@ -2,8 +2,12 @@ const assert = require('assert');
 
 const glmClient = require('../src/utils/glmClient');
 const GraphBuildTask = require('../src/models/GraphBuildTask');
+const FileUpload = require('../src/models/FileUpload');
 const extractionService = require('../src/services/extractionService');
 const alignmentService = require('../src/services/alignmentService');
+const kgController = require('../src/controllers/kgController');
+const graphBuilder = require('../src/services/graphBuilder');
+const vectorStore = require('../src/services/vectorStore');
 
 async function runTest(name, fn) {
     try {
@@ -103,6 +107,16 @@ async function testEmptyEntitiesStopsPipeline() {
     assert.ok(String(failureCall.update.errorMessage).includes('未提取到任何实体'));
 }
 
+async function testGlmParseAllowsUnclosedCodeFence() {
+    const input = '```json\n{\n  "entityTypes": [],\n  "entities": [],\n  "relationTypes": [],\n  "relations": []\n}\n';
+    const parsed = glmClient._parseExtractionResult(input);
+    assert.ok(parsed.ok, parsed.errorMessage);
+    assert.deepStrictEqual(parsed.value.entityTypes, []);
+    assert.deepStrictEqual(parsed.value.entities, []);
+    assert.deepStrictEqual(parsed.value.relationTypes, []);
+    assert.deepStrictEqual(parsed.value.relations, []);
+}
+
 async function testAlignmentEmptyGuard() {
     const updates = [];
     const originalFindById = GraphBuildTask.findById;
@@ -131,14 +145,96 @@ async function testAlignmentEmptyGuard() {
     assert.strictEqual(first.stageMessage, '未抽取到实体，无法对齐');
 }
 
+async function testConfirmAndBuildTriggersRagIndexing() {
+    const originalFindById = GraphBuildTask.findById;
+    const originalBuildGraph = graphBuilder.buildGraph;
+    const originalFileFind = FileUpload.find;
+    const originalDeleteByFileIds = vectorStore.deleteByFileIds;
+    const originalAddDocuments = vectorStore.addDocuments;
+
+    const captured = {
+        deleteFileIds: null,
+        documents: null,
+        response: null,
+        statusCode: null
+    };
+
+    process.env.RAG_CHUNK_SIZE = '10';
+    process.env.RAG_CHUNK_OVERLAP = '0';
+
+    const taskId = '507f1f77bcf86cd799439011';
+
+    GraphBuildTask.findById = async () => ({
+        _id: taskId,
+        status: 'confirming',
+        files: [{ fileId: 'f1', filename: 'a.txt' }]
+    });
+
+    graphBuilder.buildGraph = async () => ({ stats: { ok: true } });
+
+    FileUpload.find = async () => ([
+        { _id: 'f1', originalName: 'a.txt', extractedText: '12345678901234567890' }
+    ]);
+
+    vectorStore.deleteByFileIds = async (fileIds) => {
+        captured.deleteFileIds = fileIds;
+    };
+
+    vectorStore.addDocuments = async (documents) => {
+        captured.documents = documents;
+    };
+
+    const req = {
+        params: { taskId },
+        body: { modifications: {} }
+    };
+
+    const res = {
+        status(code) {
+            captured.statusCode = code;
+            return this;
+        },
+        json(payload) {
+            captured.response = payload;
+            return payload;
+        }
+    };
+
+    try {
+        await kgController.confirmAndBuild(req, res);
+    } finally {
+        GraphBuildTask.findById = originalFindById;
+        graphBuilder.buildGraph = originalBuildGraph;
+        FileUpload.find = originalFileFind;
+        vectorStore.deleteByFileIds = originalDeleteByFileIds;
+        vectorStore.addDocuments = originalAddDocuments;
+        delete process.env.RAG_CHUNK_SIZE;
+        delete process.env.RAG_CHUNK_OVERLAP;
+    }
+
+    assert.strictEqual(captured.statusCode, null);
+    assert.ok(captured.response);
+    assert.strictEqual(captured.response.success, true);
+    assert.ok(captured.response.rag);
+    assert.strictEqual(captured.response.rag.indexed, true);
+    assert.deepStrictEqual(captured.deleteFileIds, ['f1']);
+    assert.ok(Array.isArray(captured.documents));
+    assert.strictEqual(captured.documents.length, 2);
+    assert.strictEqual(captured.documents[0].metadata.fileId, 'f1');
+    assert.strictEqual(captured.documents[0].metadata.fileName, 'a.txt');
+    assert.strictEqual(captured.documents[0].metadata.chunkIndex, 0);
+    assert.strictEqual(captured.documents[1].metadata.chunkIndex, 1);
+}
+
 async function main() {
     await runTest('extraction parse failure updates task', testParseFailureUpdatesTask);
     await runTest('empty entities stops pipeline', testEmptyEntitiesStopsPipeline);
+    await runTest('glm parse allows unclosed code fence', testGlmParseAllowsUnclosedCodeFence);
     await runTest('alignment empty guard', testAlignmentEmptyGuard);
+    await runTest('confirm build triggers rag indexing', testConfirmAndBuildTriggersRagIndexing);
     if (process.exitCode) {
         process.exit(process.exitCode);
     }
 }
 
 main();
-
