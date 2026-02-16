@@ -5,6 +5,7 @@
 
 const GLM_API_URL = 'https://open.bigmodel.cn/api/paas/v4/chat/completions';
 const GLM_EMBEDDING_URL = 'https://open.bigmodel.cn/api/paas/v4/embeddings';
+const json5 = require('json5');
 
 class GLMClient {
     constructor() {
@@ -69,11 +70,11 @@ class GLMClient {
      */
     async extractKnowledge(documentText, ontologyHint = null) {
         const systemPrompt = this._buildExtractionSystemPrompt(ontologyHint);
-        
+
         // 分段处理：如果文档太长，分块抽取
         const maxChunkSize = 4000;
         const chunks = this._splitText(documentText, maxChunkSize);
-        
+
         const allResults = {
             entityTypes: [],
             entities: [],
@@ -84,16 +85,46 @@ class GLMClient {
         for (let i = 0; i < chunks.length; i++) {
             const chunk = chunks[i];
             const userPrompt = `文档片段 (${i + 1}/${chunks.length}):\n\n${chunk}`;
-            
-            const response = await this.chat([
-                { role: 'system', content: systemPrompt },
-                { role: 'user', content: userPrompt }
-            ], {
-                temperature: 0.3,
-                max_tokens: 6000
-            });
 
-            const content = response.choices[0]?.message?.content || '';
+            let response;
+            let retries = 3;
+            while (retries > 0) {
+                try {
+                    response = await this.chat([
+                        { role: 'system', content: systemPrompt },
+                        { role: 'user', content: userPrompt }
+                    ], {
+                        temperature: 0.3,
+                        max_tokens: 30000
+                    });
+
+                    if (response && response.choices && response.choices.length > 0 && response.choices[0].message && response.choices[0].message.content) {
+                        break;
+                    }
+                    console.warn(`Chunk ${i} extraction returned empty content, retrying... (${retries} left)`);
+                    console.warn('Response Dump:', JSON.stringify(response, null, 2));
+                } catch (e) {
+                    console.warn(`Chunk ${i} extraction failed: ${e.message}, retrying... (${retries} left)`);
+                }
+                retries--;
+                if (retries > 0) await new Promise(resolve => setTimeout(resolve, 2000));
+            }
+
+            const content = response?.choices?.[0]?.message?.content || '';
+
+            // 增强的空内容检查
+            if (!content || typeof content !== 'string' || !content.trim()) {
+                const error = new Error(`Chunk ${i} extraction failed: Empty or invalid content from API`);
+                error.details = {
+                    chunkIndex: i,
+                    chunkCount: chunks.length,
+                    contentType: typeof content,
+                    contentLength: content ? content.length : 0,
+                    lastResponse: response ? 'Response received' : 'No response'
+                };
+                throw error;
+            }
+
             const parsed = this._parseExtractionResult(content);
             if (!parsed.ok) {
                 const error = new Error(`抽取结果解析失败: ${parsed.errorMessage}`);
@@ -106,7 +137,7 @@ class GLMClient {
                 throw error;
             }
             const extracted = parsed.value;
-            
+
             // 合并结果
             allResults.entityTypes.push(...extracted.entityTypes);
             allResults.entities.push(...extracted.entities);
@@ -134,7 +165,7 @@ class GLMClient {
         }
 
         const texts = Array.isArray(text) ? text : [text];
-        
+
         try {
             const response = await fetch(GLM_EMBEDDING_URL, {
                 method: 'POST',
@@ -154,7 +185,7 @@ class GLMClient {
             }
 
             const data = await response.json();
-            
+
             // 返回单个向量或向量数组
             if (Array.isArray(text)) {
                 return data.data.map(item => item.embedding);
@@ -274,17 +305,44 @@ class GLMClient {
      */
     _parseExtractionResult(content) {
         const raw = typeof content === 'string' ? content : '';
+        if (!raw.trim()) {
+            return {
+                ok: false,
+                rawLength: 0,
+                rawPreview: '',
+                errorMessage: 'Empty input content'
+            };
+        }
         const rawLength = raw.length;
         const rawPreview = raw.slice(0, 2000);
         try {
             // 尝试提取JSON代码块
-            const jsonMatch = raw.match(/```json\s*([\s\S]*?)```/) || 
-                             raw.match(/```\s*([\s\S]*?)```/) ||
-                             [null, raw];
-            
-            const jsonStr = jsonMatch[1].trim();
-            const result = JSON.parse(jsonStr);
-            
+            let jsonStr = raw.trim();
+            const jsonMatch = raw.match(/```json\s*([\s\S]*?)```/) ||
+                raw.match(/```\s*([\s\S]*?)```/);
+
+            if (jsonMatch && jsonMatch[1]) {
+                jsonStr = jsonMatch[1].trim();
+            } else {
+                // 如果正则没匹配到，可能是没有闭合的```，尝试手动清理
+                jsonStr = jsonStr.replace(/^```json\s*/i, '').replace(/^```\s*/, '').replace(/```\s*$/, '');
+            }
+
+            // 尝试修复未闭合的 JSON (针对 invalid end of input 错误)
+            // 如果结尾缺少 ']}' 或 ']' 或 '}'，尝试补全
+            // 这是一个简单的启发式修复，主要针对被截断的响应
+            if (!jsonStr.endsWith('}')) {
+                if (jsonStr.lastIndexOf('}') < jsonStr.lastIndexOf(']')) {
+                    // 可能是数组没闭合，或者对象里的数组没闭合
+                    if (!jsonStr.endsWith(']')) jsonStr += ']';
+                    jsonStr += '}';
+                } else {
+                    jsonStr += '}';
+                }
+            }
+
+            const result = json5.parse(jsonStr);
+
             return {
                 ok: true,
                 rawLength,
@@ -312,10 +370,10 @@ class GLMClient {
     _splitText(text, maxChunkSize) {
         const chunks = [];
         let currentChunk = '';
-        
+
         // 按段落分割
         const paragraphs = text.split(/\n\s*\n/);
-        
+
         for (const paragraph of paragraphs) {
             if ((currentChunk + paragraph).length > maxChunkSize && currentChunk.length > 0) {
                 chunks.push(currentChunk.trim());
@@ -324,11 +382,11 @@ class GLMClient {
                 currentChunk += '\n\n' + paragraph;
             }
         }
-        
+
         if (currentChunk.trim()) {
             chunks.push(currentChunk.trim());
         }
-        
+
         return chunks.length > 0 ? chunks : [text];
     }
 
@@ -381,13 +439,13 @@ class GLMClient {
         let dotProduct = 0;
         let norm1 = 0;
         let norm2 = 0;
-        
+
         for (let i = 0; i < vec1.length; i++) {
             dotProduct += vec1[i] * vec2[i];
             norm1 += vec1[i] * vec1[i];
             norm2 += vec2[i] * vec2[i];
         }
-        
+
         return dotProduct / (Math.sqrt(norm1) * Math.sqrt(norm2));
     }
 }

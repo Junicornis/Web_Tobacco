@@ -51,8 +51,15 @@ class ExtractionService {
             });
 
             // 调用大模型抽取
-            const extractionResult = await glmClient.extractKnowledge(combinedText, ontologyHint);
-            const validation = this.validateExtractionResult(extractionResult);
+            let extractionResult = await glmClient.extractKnowledge(combinedText, ontologyHint);
+            let validation = this.validateExtractionResult(extractionResult);
+            if (!validation.valid && validation.errors.includes('未提取到任何实体')) {
+                const fallback = this._fallbackExtractFromRiskExcel(files);
+                if (fallback) {
+                    extractionResult = fallback;
+                    validation = this.validateExtractionResult(extractionResult);
+                }
+            }
             if (!validation.valid) {
                 const message = validation.errors.join('；') || '知识抽取未得到有效结果';
                 await GraphBuildTask.findByIdAndUpdate(taskId, {
@@ -253,6 +260,118 @@ class ExtractionService {
             valid: errors.length === 0,
             errors
         };
+    }
+
+    _fallbackExtractFromRiskExcel(files) {
+        const excel = files.find(f => f?.parsedData?.type === 'excel');
+        if (!excel) return null;
+        const sheets = excel.parsedData?.sheets;
+        if (!Array.isArray(sheets) || sheets.length === 0) return null;
+
+        const rows = [];
+        for (const sheet of sheets) {
+            if (Array.isArray(sheet?.data)) rows.push(...sheet.data);
+        }
+        if (rows.length === 0) return null;
+
+        const requiredKeys = ['风险单元', '作业活动', '危险发生的触发因素和过程描述', '可能导致的后果'];
+        const hasRequired = requiredKeys.every(k => rows.some(r => typeof r?.[k] === 'string' && r[k].trim()));
+        if (!hasRequired) return null;
+
+        const entityTypes = [
+            { name: '风险单元', description: '风险单元或岗位/区域' },
+            { name: '作业活动', description: '作业活动或作业内容' },
+            { name: '风险项', description: '单条风险记录' },
+            { name: '后果', description: '可能导致的后果' },
+            { name: '控制措施', description: '现有控制措施' },
+            { name: '单位或部门', description: '涉及单位或部门' }
+        ];
+
+        const relationTypes = [
+            { name: '包含', sourceType: '风险单元', targetType: '作业活动', description: '风险单元包含作业活动' },
+            { name: '存在风险', sourceType: '作业活动', targetType: '风险项', description: '作业活动存在风险项' },
+            { name: '导致', sourceType: '风险项', targetType: '后果', description: '风险项可能导致后果' },
+            { name: '控制', sourceType: '风险项', targetType: '控制措施', description: '风险项对应控制措施' },
+            { name: '涉及', sourceType: '风险项', targetType: '单位或部门', description: '风险项涉及单位或部门' }
+        ];
+
+        const entities = [];
+        const relations = [];
+
+        const seen = new Set();
+        const addEntity = (name, type, properties, context) => {
+            const n = typeof name === 'string' ? name.trim() : '';
+            if (!n) return;
+            const key = `${type}::${n}`;
+            if (seen.has(key)) return;
+            seen.add(key);
+            entities.push({
+                name: n,
+                type,
+                properties: properties || {},
+                context: (typeof context === 'string' ? context : '').slice(0, 100)
+            });
+        };
+
+        const addRelation = (source, target, type, context) => {
+            if (!source || !target) return;
+            relations.push({
+                source,
+                target,
+                type,
+                context: (typeof context === 'string' ? context : '').slice(0, 120)
+            });
+        };
+
+        for (let i = 0; i < rows.length; i++) {
+            const r = rows[i] || {};
+            const unit = String(r['风险单元'] || '').trim();
+            const activity = String(r['作业活动'] || '').trim();
+            const hazardDesc = String(r['危险发生的触发因素和过程描述'] || '').trim();
+            const consequence = String(r['可能导致的后果'] || '').trim();
+            if (!unit || !activity || !hazardDesc || !consequence) continue;
+
+            const seq = String(r['序号'] ?? (i + 1)).trim();
+            const riskLevel = String(r['风险等级'] || '').trim();
+            const severity = r['风险等级评价'];
+            const possibility = r['Column7'];
+            const score = r['Column8'];
+            const control = String(r['现有控制措施'] || '').trim();
+            const dept = String(r['涉及单位或部门'] || '').trim();
+
+            const riskItemName = `${unit}-${activity}-${consequence}-${seq}`.replace(/\s+/g, '');
+            const rowContext = `风险单元:${unit} 作业活动:${activity} 触发:${hazardDesc} 后果:${consequence}`;
+
+            addEntity(unit, '风险单元', {}, rowContext);
+            addEntity(activity, '作业活动', {}, rowContext);
+            addEntity(consequence, '后果', {}, rowContext);
+            addEntity(riskItemName, '风险项', {
+                序号: seq,
+                触发因素: hazardDesc,
+                风险等级: riskLevel || undefined,
+                风险严重性: severity ?? undefined,
+                风险可能性: possibility ?? undefined,
+                综合评价分值: score ?? undefined
+            }, rowContext);
+
+            addRelation(unit, activity, '包含', rowContext);
+            addRelation(activity, riskItemName, '存在风险', rowContext);
+            addRelation(riskItemName, consequence, '导致', rowContext);
+
+            if (control) {
+                const controlName = control.length <= 60 ? control : `${riskItemName}-控制措施`;
+                addEntity(controlName, '控制措施', { 内容: control }, rowContext);
+                addRelation(riskItemName, controlName, '控制', rowContext);
+            }
+
+            if (dept) {
+                addEntity(dept, '单位或部门', {}, rowContext);
+                addRelation(riskItemName, dept, '涉及', rowContext);
+            }
+        }
+
+        if (entities.length === 0) return null;
+        return { entityTypes, entities, relationTypes, relations };
     }
 
     /**

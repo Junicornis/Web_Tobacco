@@ -40,26 +40,26 @@ class DocumentParser {
 
             workbook.SheetNames.forEach(sheetName => {
                 const worksheet = workbook.Sheets[sheetName];
-                const rawData = xlsx.utils.sheet_to_json(worksheet, { header: 1 });
-                
+                const rawData = xlsx.utils.sheet_to_json(worksheet, { header: 1, defval: '' });
+
                 if (rawData.length === 0) return;
 
                 // 智能表头识别
                 const { headers, dataStartRow } = this._detectHeaders(rawData);
-                
+
                 // 转换数据
                 const data = [];
                 for (let i = dataStartRow; i < rawData.length; i++) {
                     const row = rawData[i];
-                    if (row.every(cell => !cell)) continue; // 跳过空行
-                    
+                    if (row.every(cell => String(cell ?? '').trim() === '')) continue;
+
                     const rowData = {};
                     headers.forEach((header, idx) => {
                         if (header && row[idx] !== undefined) {
                             rowData[header] = this._normalizeCellValue(row[idx]);
                         }
                     });
-                    
+
                     if (Object.keys(rowData).length > 0) {
                         data.push(rowData);
                     }
@@ -98,7 +98,7 @@ class DocumentParser {
         try {
             // 使用 mammoth 提取文本并保留结构
             const mammoth = require('mammoth');
-            
+
             const result = await mammoth.extractRawText({
                 path: filePath,
                 // 保留一些格式信息
@@ -144,7 +144,7 @@ class DocumentParser {
         try {
             const pdfParse = require('pdf-parse');
             const pdfBuffer = fs.readFileSync(filePath);
-            
+
             const result = await pdfParse(pdfBuffer, {
                 max: 0 // 解析所有页面
             });
@@ -179,7 +179,7 @@ class DocumentParser {
             // 尝试不同的编码
             let text = '';
             const encodings = ['utf8', 'utf-8', 'gbk', 'gb2312', 'gb18030', 'latin1'];
-            
+
             for (const encoding of encodings) {
                 try {
                     text = fs.readFileSync(filePath, { encoding });
@@ -194,7 +194,7 @@ class DocumentParser {
 
             // 统一换行符
             text = text.replace(/\r\n/g, '\n').replace(/\r/g, '\n');
-            
+
             const lines = text.split('\n').filter(line => line.trim());
 
             return {
@@ -217,45 +217,71 @@ class DocumentParser {
             return { headers: [], dataStartRow: 0 };
         }
 
-        // 如果只有一行，直接作为数据
         if (rows.length === 1) {
             return { headers: rows[0].map((_, i) => `Column${i + 1}`), dataStartRow: 0 };
         }
 
-        // 启发式规则：
-        // 1. 第一行通常是表头
-        // 2. 表头通常是字符串，而数据可能包含数字
-        // 3. 表头通常较短
-        
-        const firstRow = rows[0];
-        const secondRow = rows[1];
+        const maxScanRows = Math.min(rows.length, 30);
+        const headerKeywordRe = /序号|编号|风险|作业|危险|触发|过程|后果|等级|严重性|可能性|综合评价|分值|控制措施|单位|部门/i;
+        const strongHeaderRe = /序号|风险单元|作业活动|危险发生|触发因素|可能导致的后果|现有控制措施|涉及单位|部门/i;
 
-        // 检查第一行是否像表头
-        const looksLikeHeader = firstRow.every((cell, idx) => {
-            const cellStr = String(cell || '').trim();
-            const secondCell = secondRow[idx];
-            
-            // 如果第一行是字符串，第二行是数字，很可能是表头
-            if (cellStr && secondCell !== undefined) {
-                const isFirstString = isNaN(Number(cellStr));
-                const isSecondNumber = !isNaN(Number(secondCell));
-                return isFirstString || !isSecondNumber;
+        const toCellStr = (cell) => String(cell ?? '').trim();
+        const nonEmptyCount = (row) => row.reduce((acc, cell) => acc + (toCellStr(cell) ? 1 : 0), 0);
+        const distinctNonEmptyCount = (row) => {
+            const set = new Set();
+            for (const cell of row) {
+                const s = toCellStr(cell);
+                if (s) set.add(s);
             }
-            return true;
-        });
+            return set.size;
+        };
 
-        if (looksLikeHeader) {
-            return {
-                headers: firstRow.map((cell, i) => String(cell || `Column${i + 1}`).trim()),
-                dataStartRow: 1
-            };
+        let bestRowIndex = 0;
+        let bestScore = -Infinity;
+
+        for (let i = 0; i < maxScanRows; i++) {
+            const row = rows[i] || [];
+            const count = nonEmptyCount(row);
+            const distinct = distinctNonEmptyCount(row);
+            const rowJoined = row.map(toCellStr).filter(Boolean).join(' ');
+            const hasKeyword = headerKeywordRe.test(rowJoined);
+            const hasStrongHeader = strongHeaderRe.test(rowJoined);
+
+            const firstCellStr = toCellStr(row[0]);
+            const firstCellIsNumber = firstCellStr !== '' && !isNaN(Number(firstCellStr));
+            let maxLen = 0;
+            for (const cell of row) {
+                const len = toCellStr(cell).length;
+                if (len > maxLen) maxLen = len;
+            }
+
+            let score = count * 2 + distinct;
+            if (count <= 1) score -= 10;
+            if (hasKeyword) score += 15;
+            if (hasStrongHeader) score += 120;
+            if (firstCellIsNumber) score -= 18;
+            if (maxLen >= 40) score -= 12;
+
+            if (score > bestScore) {
+                bestScore = score;
+                bestRowIndex = i;
+            }
         }
 
-        // 默认生成列名
-        return {
-            headers: firstRow.map((_, i) => `Column${i + 1}`),
-            dataStartRow: 0
-        };
+        const headerRow = rows[bestRowIndex] || [];
+        const headers = headerRow.map((cell, i) => {
+            const s = toCellStr(cell);
+            return s ? s : `Column${i + 1}`;
+        });
+
+        let dataStartRow = Math.min(bestRowIndex + 1, rows.length);
+        const maybeSubHeader = rows[dataStartRow] || [];
+        const maybeSubHeaderJoined = maybeSubHeader.map(toCellStr).filter(Boolean).join(' ');
+        if ((toCellStr(maybeSubHeader[0]) === '') && /岗位|区域|严重性|可能性|综合评价|分值/i.test(maybeSubHeaderJoined)) {
+            dataStartRow = Math.min(dataStartRow + 1, rows.length);
+        }
+
+        return { headers, dataStartRow };
     }
 
     /**
@@ -281,12 +307,12 @@ class DocumentParser {
         let text = `[Sheet: ${sheetName}]\n`;
         text += `表头: ${headers.join(', ')}\n`;
         text += `数据行数: ${data.length}\n\n`;
-        
+
         // 增加提取行数限制，支持更多数据
         // GLMClient 会处理文本分块，所以这里可以提供更多数据
         const maxRows = 2000;
         const previewRows = data.slice(0, maxRows);
-        
+
         previewRows.forEach((row, idx) => {
             text += `[行${idx + 1}] `;
             // 优化格式，使其更易读
