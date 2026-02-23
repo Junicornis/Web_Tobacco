@@ -7,7 +7,6 @@ const authRoutes = require('./routes/auth');
 const adminRoutes = require('./routes/admin');
 const trainingRoutes = require('./routes/training');
 const kgRoutes = require('./routes/kg');
-const fileRoutes = require('./routes/files');
 
 const app = express();
 const PORT = process.env.PORT || 3000;
@@ -68,7 +67,6 @@ app.use('/api/auth', authRoutes);
 app.use('/api/admin', adminRoutes);
 app.use('/api/training', trainingRoutes);
 app.use('/api/kg', kgRoutes);
-app.use('/api/files', fileRoutes);
 
 const primaryServer = app.listen(PORT, () => {
     console.log(`Server running on http://localhost:${PORT}`);

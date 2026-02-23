@@ -76,7 +76,7 @@ const AdminQuestionManage = () => {
   ];
 
   return (
-    <Card title="题库管理" extra={<Button type="primary" icon={<PlusOutlined />} onClick={handleAdd}>新增题目</Button>}>
+    <Card title="知识图谱" extra={<Button type="primary" icon={<PlusOutlined />} onClick={handleAdd}>新增题目</Button>}>
       <Table columns={columns} dataSource={questions} rowKey="_id" loading={loading} />
       
       <Modal title="新增题目" open={isModalVisible} onCancel={() => setIsModalVisible(false)} onOk={() => form.submit()}>

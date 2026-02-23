@@ -1,26 +1,19 @@
 import React, { useState, useEffect } from 'react';
-import { Form, Input, DatePicker, Button, Select, Checkbox, message, Card, Typography } from 'antd';
+import { Form, Input, DatePicker, Button, Select, message, Card, Typography } from 'antd';
 import axios from 'axios';
-import dayjs from 'dayjs';
 
 const { Title } = Typography;
 const { Option } = Select;
 
-const unityProjects = [
-  { label: '消防培训', value: '' }, // 留空则使用 .env 默认值
-  { label: '机房安全培训', value: 'D:/proj/Hu_tobacco/Web_Tobacco/unity/Build/Release/Safety-Training.exe' },
-  { label: '机房安全培训第二期', value: 'D:/proj/Hu_tobacco/Web_Tobacco/unity/Build/Release/Safety-Training.exe' },
-  { label: '烟草车间安全演示', value: 'D:/proj/Hu_tobacco/Web_Tobacco/unity/Build/Release/Safety-Training.exe' }, // 这里暂时指向同一个，实际可改
-  { label: '物流中心应急演练', value: 'D:/proj/Hu_tobacco/Web_Tobacco/unity/Build/Release/Safety-Training.exe' }
-];
-
 const AdminTaskCreate = () => {
   const [form] = Form.useForm();
   const [users, setUsers] = useState([]);
+  const [scenes, setScenes] = useState([]);
   const [loading, setLoading] = useState(false);
 
   useEffect(() => {
     fetchUsers();
+    fetchScenes();
   }, []);
 
   const fetchUsers = async () => {
@@ -32,13 +25,21 @@ const AdminTaskCreate = () => {
     }
   };
 
+  const fetchScenes = async () => {
+    try {
+      const res = await axios.get('/api/admin/scenes');
+      if (res.data.success) setScenes(res.data.scenes || []);
+    } catch (err) {
+      message.error('获取场景列表失败');
+    }
+  };
+
   const onFinish = async (values) => {
     setLoading(true);
     try {
       const payload = {
         ...values,
-        deadline: values.deadline.format('YYYY-MM-DD'),
-        notifyUsers: values.notifyUsers || false
+        deadline: values.deadline.format('YYYY-MM-DD')
       };
 
       const res = await axios.post('/api/admin/create', payload);
@@ -61,7 +62,7 @@ const AdminTaskCreate = () => {
         form={form}
         layout="vertical"
         onFinish={onFinish}
-        initialValues={{ notifyUsers: true, unityPath: '' }}
+        initialValues={{ unityPath: '' }}
       >
         <Form.Item
           name="title"
@@ -85,8 +86,9 @@ const AdminTaskCreate = () => {
           rules={[{ required: true, message: '请选择培训项目' }]}
         >
           <Select placeholder="请选择要启动的 Unity 场景">
-            {unityProjects.map(p => (
-              <Option key={p.value} value={p.value}>{p.label}</Option>
+            <Option value="">使用默认（.env 配置）</Option>
+            {scenes.map(s => (
+              <Option key={s._id} value={s.exePath}>{s.name}</Option>
             ))}
           </Select>
         </Form.Item>
@@ -114,10 +116,6 @@ const AdminTaskCreate = () => {
               <Option key={u._id} value={u._id}>{u.username} ({u.department})</Option>
             ))}
           </Select>
-        </Form.Item>
-
-        <Form.Item name="notifyUsers" valuePropName="checked">
-          <Checkbox>同时发送站内信通知</Checkbox>
         </Form.Item>
 
         <Form.Item>

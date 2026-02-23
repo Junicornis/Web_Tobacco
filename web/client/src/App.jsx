@@ -9,9 +9,7 @@ import MainLayout from './layouts/MainLayout';
 import AdminTaskCreate from './pages/AdminTaskCreate';
 import AdminTaskMonitor from './pages/AdminTaskMonitor';
 import AdminUserList from './pages/AdminUserList';
-import AdminTrainingRecords from './pages/AdminTrainingRecords';
-import AdminQuestionManage from './pages/AdminQuestionManage';
-import AdminStatistics from './pages/AdminStatistics';
+import AdminSceneImport from './pages/AdminStatistics';
 import KGLayout from './pages/KnowledgeGraph/KGLayout';
 import KGUploadPage from './pages/KnowledgeGraph/KGUploadPage';
 import KGBuildTasksPage from './pages/KnowledgeGraph/KGBuildTasksPage';
@@ -20,9 +18,6 @@ import KGOntologyPage from './pages/KnowledgeGraph/KGOntologyPage';
 import KGBrowserPage from './pages/KnowledgeGraph/KGBrowserPage';
 import KGSettingsPage from './pages/KnowledgeGraph/KGSettingsPage';
 import UserTaskList from './pages/UserTaskList';
-import UserInbox from './pages/UserInbox';
-import UserHistory from './pages/UserHistory';
-import UserMistakes from './pages/UserMistakes';
 import UserProfile from './pages/UserProfile';
 
 // Login Component (Internal)
@@ -90,49 +85,64 @@ function App() {
         <ConfigProvider locale={zhCN}>
             <Router>
                 <Routes>
-                    <Route path="/login" element={!user ? <Login onLogin={setUser} /> : <Navigate to={user.role === 'admin' ? '/admin/dashboard' : '/user/tasks'} />} />
+                    <Route
+                        path="/login"
+                        element={
+                            !user ? (
+                                <Login onLogin={setUser} />
+                            ) : (
+                                <Navigate to={user.role === 'admin' ? '/admin/scenes' : '/user/tasks'} />
+                            )
+                        }
+                    />
 
                     {/* Admin Routes */}
-                    <Route path="/admin/*" element={
-                        user && user.role === 'admin' ? (
-                            <MainLayout role="admin" username={user.username} onLogout={handleLogout}>
-                                <Routes>
-                                    <Route path="dashboard" element={<AdminTaskCreate />} />
-                                    <Route path="monitor" element={<AdminTaskMonitor />} />
-                                    <Route path="users" element={<AdminUserList />} />
-                                    <Route path="records" element={<AdminTrainingRecords />} />
-                                    <Route path="questions" element={<AdminQuestionManage />} />
-                                    <Route path="statistics" element={<AdminStatistics />} />
-                                    <Route path="knowledge-graph/*" element={<KGLayout />}>
-                                        <Route path="upload" element={<KGUploadPage />} />
-                                        <Route path="tasks" element={<KGBuildTasksPage />} />
-                                        <Route path="tasks/:taskId" element={<KGConfirmPage />} />
-                                        <Route path="ontology" element={<KGOntologyPage />} />
-                                        <Route path="browser" element={<KGBrowserPage />} />
-                                        <Route path="settings" element={<KGSettingsPage />} />
-                                    </Route>
-                                    <Route path="*" element={<Navigate to="dashboard" />} />
-                                </Routes>
-                            </MainLayout>
-                        ) : <Navigate to="/login" />
-                    } />
+                    <Route
+                        path="/admin/*"
+                        element={
+                            user && user.role === 'admin' ? (
+                                <MainLayout role="admin" username={user.username} onLogout={handleLogout}>
+                                    <Routes>
+                                        <Route path="scenes" element={<AdminSceneImport />} />
+                                        <Route path="users" element={<AdminUserList />} />
+                                        <Route path="dashboard" element={<AdminTaskCreate />} />
+                                        <Route path="monitor" element={<AdminTaskMonitor />} />
+
+                                        <Route path="knowledge-graph/*" element={<KGLayout />}>
+                                            <Route path="upload" element={<KGUploadPage />} />
+                                            <Route path="tasks" element={<KGBuildTasksPage />} />
+                                            <Route path="tasks/:taskId" element={<KGConfirmPage />} />
+                                            <Route path="ontology" element={<KGOntologyPage />} />
+                                            <Route path="browser" element={<KGBrowserPage />} />
+                                            <Route path="settings" element={<KGSettingsPage />} />
+                                        </Route>
+
+                                        <Route path="*" element={<Navigate to="scenes" />} />
+                                    </Routes>
+                                </MainLayout>
+                            ) : (
+                                <Navigate to="/login" />
+                            )
+                        }
+                    />
 
                     {/* User Routes */}
-                    <Route path="/user/*" element={
-                        user && user.role === 'user' ? (
-                            <MainLayout role="user" username={user.username} onLogout={handleLogout}>
-                                <Routes>
-                                    <Route path="tasks" element={<UserTaskList user={user} />} />
-                                    <Route path="inbox" element={<UserInbox user={user} />} />
-                                    <Route path="history" element={<UserHistory user={user} />} />
-                                    <Route path="mistakes" element={<UserMistakes user={user} />} />
-                                    <Route path="profile" element={<UserProfile user={user} />} />
-                                    <Route path="knowledge-graph" element={<KGBrowserPage />} />
-                                    <Route path="*" element={<Navigate to="tasks" />} />
-                                </Routes>
-                            </MainLayout>
-                        ) : <Navigate to="/login" />
-                    } />
+                    <Route
+                        path="/user/*"
+                        element={
+                            user && user.role === 'user' ? (
+                                <MainLayout role="user" username={user.username} onLogout={handleLogout}>
+                                    <Routes>
+                                        <Route path="tasks" element={<UserTaskList user={user} />} />
+                                        <Route path="profile" element={<UserProfile user={user} />} />
+                                        <Route path="*" element={<Navigate to="/user/tasks" replace />} />
+                                    </Routes>
+                                </MainLayout>
+                            ) : (
+                                <Navigate to="/login" />
+                            )
+                        }
+                    />
 
                     <Route path="*" element={<Navigate to="/login" />} />
                 </Routes>
